@@ -63,8 +63,29 @@ jobs:
       - name: Tests
         run: ./gradlew :app:sharedLogic:testAndroidHostTest
 
-      - name: Build the release APK
+      - name: Build the release APKs
         run: ./gradlew :app:androidApp:assembleRelease
+
+      - name: Verify release APK signatures
+        run: |
+          shopt -s nullglob
+          apks=(app/androidApp/build/outputs/apk/release/*.apk)
+          if [ ${#apks[@]} -eq 0 ]; then
+            echo "::error::No release APKs were produced."
+            exit 1
+          fi
+          apksigner=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)
+          if [ -z "$apksigner" ]; then
+            echo "::error::apksigner was not found in the Android SDK."
+            exit 1
+          fi
+          for apk in "${apks[@]}"; do
+            if [[ "$apk" == *-unsigned.apk ]]; then
+              echo "::error::$apk is unsigned."
+              exit 1
+            fi
+            "$apksigner" verify --verbose --print-certs "$apk"
+          done
 
       - uses: actions/upload-artifact@v7
         with:
