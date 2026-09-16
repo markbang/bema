@@ -53,10 +53,11 @@ wrapper, runs `./gradlew androidCheck` on ubuntu, and builds the UIKit app with
 up to date from [Conventional Commits](https://www.conventionalcommits.org/).
 Merging it bumps `version.txt` + `CHANGELOG.md` and creates the `vX.Y.Z` tag,
 which triggers [`.github/workflows/release.yml`](./.github/workflows/release.yml)
-to build and attach the artifacts: a release APK + AAB for Android and an
+to build and attach the artifacts: a release APK for Android and an
 unsigned `.xcarchive` for iOS. Pushing a tag by hand does the same, and
 `workflow_dispatch` builds the artifacts without publishing them.
 
-APKs are signed when the `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`,
-`ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD` secrets exist; without them the
-APK is unsigned (the `.aab` is what Play wants anyway).
+GitHub Releases are the only distribution channel, so the Android job requires
+the `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`
+and `ANDROID_KEY_PASSWORD` secrets and fails without them — an unsigned APK
+cannot be installed on a device.

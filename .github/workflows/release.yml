@@ -33,8 +33,24 @@ jobs:
           # A tag-scoped cache entry would only ever be read by that tag.
           cache-read-only: true
 
+      # GitHub Releases are the only distribution channel, so an unsigned APK is
+      # not a degraded artifact — Android refuses to install it. Fail before
+      # spending build minutes rather than publish a release only users notice is
+      # broken. All four are checked because build.gradle.kts only wires up the
+      # signing config when all four are non-blank.
+      - name: Require the signing secrets
+        run: |
+          missing=""
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            [ -n "${!name:-}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing signing secret(s):$missing"
+            echo "::error::An unsigned APK cannot be installed on a device, so there is nothing to publish."
+            exit 1
+          fi
+
       - name: Decode the release keystore
-        if: env.ANDROID_KEYSTORE_BASE64 != ''
         run: |
           echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
           {
@@ -47,19 +63,13 @@ jobs:
       - name: Tests
         run: ./gradlew :app:sharedLogic:testAndroidHostTest
 
-      - name: Build release artifacts
-        run: |
-          if [ -z "${ANDROID_KEYSTORE_FILE:-}" ]; then
-            echo "::notice::No keystore secrets set — the APK will be unsigned. Upload the .aab to Play, or configure ANDROID_KEYSTORE_BASE64/…_PASSWORD/…ALIAS/…_PASSWORD."
-          fi
-          ./gradlew :app:androidApp:assembleRelease :app:androidApp:bundleRelease
+      - name: Build the release APK
+        run: ./gradlew :app:androidApp:assembleRelease
 
       - uses: actions/upload-artifact@v7
         with:
           name: android-release
-          path: |
-            app/androidApp/build/outputs/apk/release/*.apk
-            app/androidApp/build/outputs/bundle/release/*.aab
+          path: app/androidApp/build/outputs/apk/release/*.apk
           if-no-files-found: error
           retention-days: 14
 
@@ -72,7 +82,6 @@ jobs:
             || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
           gh release upload "$GITHUB_REF_NAME" \
             app/androidApp/build/outputs/apk/release/*.apk \
-            app/androidApp/build/outputs/bundle/release/*.aab \
             --clobber
 
   ios:
