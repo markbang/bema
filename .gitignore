@@ -22,3 +22,9 @@ DerivedData/
 # --- Misc -----------------------------------------------------------------
 .DS_Store
 *.pem
+
+# Release signing material — never commit (.signing/release.keystore backs the
+# ANDROID_KEYSTORE_* secrets used by .github/workflows/release.yml).
+.signing/
+*.keystore
+*.jks
