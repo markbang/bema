@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    # Documentation-only changes should not burn CI minutes.
+    paths-ignore: ["**/*.md"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.head_ref || github.ref }}-${{ github.workflow }}
+  # Never cancel a run on main; superseded PR runs are wasted work.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  # The Gradle wrapper jar is a binary that is executed on every build; verify
+  # its checksum against the Gradle release before anything else runs.
+  wrapper-validation:
+    name: Gradle wrapper validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: gradle/actions/wrapper-validation@v6
+
+  android:
+    name: Android
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # Caches the Gradle User Home: downloaded dependencies, the Gradle wrapper
+      # distribution, and the local build cache (`caches` + `notifications` are
+      # the action's defaults; unused entries are purged before saving).
+      #   cache-provider  default "enhanced" is free for public repos; use
+      #                   "basic" for the 100% MIT provider.
+      #   cache-read-only writes are only useful on main: caches created by a
+      #                   pull_request run are scoped to that merge ref.
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+
+      # No ~/.konan cache here on purpose: Kotlin/Native (~850 MB) is only
+      # downloaded by native tasks and this job never runs one.
+      - name: Unit tests and debug APK
+        run: ./gradlew androidCheck
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: androidApp-debug
+          path: app/androidApp/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 7
+
+  # macOS 26 (Apple silicon, 3 vCPU / 7 GB) — Xcode only exists on macOS.
+  ios:
+    name: iOS
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+
+      # Kotlin/Native keeps the compiler distribution and platform libraries in
+      # ~/.konan (~850 MB). Key and restore-keys follow the Kotlin team's
+      # CI guidance: hashing the version catalog keeps the toolchain pinned to
+      # the Kotlin version in use, and the restore-key reuses it across
+      # unrelated version bumps instead of re-downloading it.
+      - uses: actions/cache@v6
+        with:
+          path: ~/.konan
+          key: konan-${{ runner.os }}-${{ hashFiles('**/libs.versions.toml') }}
+          restore-keys: konan-${{ runner.os }}-
+
+      - name: Install XcodeGen
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
+        run: command -v xcodegen >/dev/null || brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: app/iosApp
+        run: xcodegen generate
+
+      # Builds the UIKit app; its "Compile Kotlin" script phase runs
+      # :app:sharedLogic:embedAndSignAppleFrameworkForXcode, which is the
+      # official direct-integration setup.
+      - name: Build for the simulator
+        working-directory: app/iosApp
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project Bema.xcodeproj \
+            -scheme Bema \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            build
