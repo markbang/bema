@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bema UI Preview</title>
+  <style>
+    :root { color-scheme: dark; --bg: #0b0b0c; --panel: #151516; --line: #2a2a2c; --text: #f4f4f5; --muted: #97979c; --accent: #1d9bf0; }
+    * { box-sizing: border-box; letter-spacing: 0; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, sans-serif; }
+    header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(18px); }
+    h1 { margin: 0; font-size: 18px; }
+    header span { color: var(--muted); font-size: 13px; }
+    main { display: grid; grid-template-columns: repeat(4, minmax(260px, 1fr)); gap: 20px; max-width: 1680px; margin: 0 auto; padding: 24px; }
+    figure { margin: 0; min-width: 0; }
+    figcaption { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px; }
+    figcaption strong { font-size: 14px; }
+    figcaption code { color: var(--muted); font-size: 11px; }
+    img { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
+    @media (max-width: 1180px) { main { grid-template-columns: repeat(2, minmax(260px, 1fr)); } }
+    @media (max-width: 640px) { header { padding: 12px 14px; } header span { display: none; } main { grid-template-columns: 1fr; padding: 14px; } }
+  </style>
+</head>
+<body>
+  <header><h1>Bema UI Preview</h1><span>Rendered from the Debug UI Catalog on Android Emulator</span></header>
+  <main>
+    <figure><figcaption><strong>Timeline</strong><code>01-timeline.png</code></figcaption><img src="01-timeline.png" alt="Bema timeline screenshot"></figure>
+    <figure><figcaption><strong>Memo detail</strong><code>02-detail.png</code></figcaption><img src="02-detail.png" alt="Bema memo detail screenshot"></figure>
+    <figure><figcaption><strong>Composer</strong><code>03-composer.png</code></figcaption><img src="03-composer.png" alt="Bema composer screenshot"></figure>
+    <figure><figcaption><strong>Accounts</strong><code>04-accounts.png</code></figcaption><img src="04-accounts.png" alt="Bema account switcher screenshot"></figure>
+  </main>
+</body>
+</html>

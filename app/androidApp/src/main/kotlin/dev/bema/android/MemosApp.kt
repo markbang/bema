@@ -84,6 +84,7 @@ import dev.bema.shared.data.session.MemosAccount
 import dev.bema.shared.data.session.PendingAttachment
 import dev.bema.shared.data.session.MemosAppState
 import dev.bema.shared.data.session.MemosTimelineController
+import dev.bema.shared.data.session.MemosUiController
 import kotlinx.coroutines.launch
 
 private val Ink = Color(0xFF050505)
@@ -94,7 +95,7 @@ private val TextSecondary = Color(0xFF8C8C8C)
 private val Accent = Color(0xFF1D9BF0)
 
 @Composable
-fun BemaMemosApp(controller: MemosTimelineController = remember { MemosTimelineController() }) {
+fun BemaMemosApp(controller: MemosUiController = remember { MemosTimelineController() }) {
     val state by controller.state.collectAsState()
     val darkColors = darkColorScheme(
         primary = Accent,
@@ -121,7 +122,7 @@ private fun Avatar(
     url: String?,
     label: String,
     modifier: Modifier = Modifier,
-    controller: MemosTimelineController? = null,
+    controller: MemosUiController? = null,
     user: User? = null
 ) {
     val bytes by produceState<ByteArray?>(initialValue = null, key1 = user?.username) {
@@ -142,7 +143,7 @@ private fun Avatar(
 }
 
 @Composable
-private fun SignInScreen(state: MemosAppState, controller: MemosTimelineController) {
+private fun SignInScreen(state: MemosAppState, controller: MemosUiController) {
     val scope = rememberCoroutineScope()
     var instance by remember { mutableStateOf("") }
     var username by remember { mutableStateOf("") }
@@ -181,7 +182,7 @@ private fun DarkField(value: String, onValueChange: (String) -> Unit, label: Str
 }
 
 @Composable
-private fun TimelineShell(state: MemosAppState, controller: MemosTimelineController) {
+private fun TimelineShell(state: MemosAppState, controller: MemosUiController) {
     val scope = rememberCoroutineScope()
     var showComposer by remember { mutableStateOf(false) }
     var showAccounts by remember { mutableStateOf(false) }
@@ -205,7 +206,7 @@ private fun TimelineShell(state: MemosAppState, controller: MemosTimelineControl
 }
 
 @Composable
-private fun TimelineHeader(state: MemosAppState, controller: MemosTimelineController, onAccounts: () -> Unit) {
+private fun TimelineHeader(state: MemosAppState, controller: MemosUiController, onAccounts: () -> Unit) {
     val scope = rememberCoroutineScope()
     Row(
         Modifier.fillMaxWidth().background(Ink).padding(horizontal = 18.dp, vertical = 10.dp),
@@ -245,7 +246,7 @@ private fun BottomNav(onAdd: () -> Unit) {
 }
 
 @Composable
-private fun TimelineScreen(state: MemosAppState, controller: MemosTimelineController, modifier: Modifier) {
+private fun TimelineScreen(state: MemosAppState, controller: MemosUiController, modifier: Modifier) {
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     val shouldLoadMore by remember { derivedStateOf {
@@ -269,7 +270,7 @@ private fun TimelineScreen(state: MemosAppState, controller: MemosTimelineContro
 }
 
 @Composable
-private fun MemoTweet(memo: Memo, user: User?, controller: MemosTimelineController, onReact: (String) -> Unit) {
+private fun MemoTweet(memo: Memo, user: User?, controller: MemosUiController, onReact: (String) -> Unit) {
     val scope = rememberCoroutineScope()
     val name = user?.visibleName ?: memo.creator.substringAfterLast('/').ifBlank { "Memos" }
     Column(Modifier.fillMaxWidth().clickable { scope.launch { controller.openMemo(memo.name) } }.padding(horizontal = 16.dp, vertical = 14.dp)) {
@@ -296,7 +297,7 @@ private fun MemoTweet(memo: Memo, user: User?, controller: MemosTimelineControll
 }
 
 @Composable
-private fun MediaRail(memo: Memo, controller: MemosTimelineController) {
+private fun MediaRail(memo: Memo, controller: MemosUiController) {
     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 12.dp)) {
         items(memo.attachments.filter { it.isImage }, key = { it.name }) { attachment ->
             val bytes by produceState<ByteArray?>(null, attachment.name) { value = controller.attachmentBytes(attachment, thumbnail = true) }
@@ -330,7 +331,7 @@ private fun Action(icon: ImageVector, description: String, count: String, onClic
 }
 
 @Composable
-private fun ComposerDialog(state: MemosAppState, controller: MemosTimelineController, onDismiss: () -> Unit) {
+private fun ComposerDialog(state: MemosAppState, controller: MemosUiController, onDismiss: () -> Unit) {
     var text by remember { mutableStateOf("") }
     var attachments by remember { mutableStateOf(emptyList<PendingAttachment>()) }
     val scope = rememberCoroutineScope()
@@ -391,7 +392,7 @@ private fun ComposerDialog(state: MemosAppState, controller: MemosTimelineContro
 }
 
 @Composable
-private fun AccountSheet(state: MemosAppState, controller: MemosTimelineController, onDismiss: () -> Unit) {
+private fun AccountSheet(state: MemosAppState, controller: MemosUiController, onDismiss: () -> Unit) {
     WindowDialog(
         show = true,
         title = "Accounts",
@@ -411,7 +412,7 @@ private fun AccountSheet(state: MemosAppState, controller: MemosTimelineControll
 }
 
 @Composable
-private fun AccountRow(account: MemosAccount, selected: Boolean, controller: MemosTimelineController) {
+private fun AccountRow(account: MemosAccount, selected: Boolean, controller: MemosUiController) {
     val scope = rememberCoroutineScope()
     Row(Modifier.fillMaxWidth().clickable { scope.launch { controller.selectAccount(account.id) } }, verticalAlignment = Alignment.CenterVertically) {
         Avatar(controller.accountLogoUrl(account).ifBlank { account.avatarUrl }, account.siteTitle, Modifier.size(38.dp), controller)
@@ -425,7 +426,7 @@ private fun AccountRow(account: MemosAccount, selected: Boolean, controller: Mem
 }
 
 @Composable
-private fun MemoDetailScreen(state: MemosAppState, controller: MemosTimelineController, modifier: Modifier) {
+private fun MemoDetailScreen(state: MemosAppState, controller: MemosUiController, modifier: Modifier) {
     val scope = rememberCoroutineScope()
     var comment by remember { mutableStateOf("") }
     val memo = state.selectedMemo ?: return

@@ -1,0 +1,123 @@
+name: UI Preview
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "app/androidApp/**"
+      - "app/sharedLogic/src/commonMain/kotlin/dev/bema/shared/data/model/**"
+      - "app/sharedLogic/src/commonMain/kotlin/dev/bema/shared/data/session/**"
+      - "gradle/libs.versions.toml"
+      - ".github/workflows/ui-preview.yml"
+      - "preview-gallery/**"
+  pull_request:
+    paths:
+      - "app/androidApp/**"
+      - "app/sharedLogic/src/commonMain/kotlin/dev/bema/shared/data/model/**"
+      - "app/sharedLogic/src/commonMain/kotlin/dev/bema/shared/data/session/**"
+      - "gradle/libs.versions.toml"
+      - ".github/workflows/ui-preview.yml"
+      - "preview-gallery/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ui-preview-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  android-ui-preview:
+    name: Android UI Catalog
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Restore Android emulator snapshot
+        id: avd-cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.android/avd/*
+            ~/.android/adb*
+          key: avd-${{ runner.os }}-api35-pixel7-v1
+
+      - name: Create Android emulator snapshot
+        if: steps.avd-cache.outputs.cache-hit != 'true'
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: false
+          script: echo "Android emulator snapshot created."
+
+      - name: Capture production Compose UI
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7
+          force-avd-creation: false
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: |
+            adb shell wm size 1080x2400
+            adb shell wm density 420
+            ./gradlew :app:androidApp:connectedDebugAndroidTest -PskipIosTargets
+            mkdir -p build/ui-preview
+            adb pull /sdcard/Android/data/dev.bema.android/files/ui-preview/. build/ui-preview/
+
+      - name: Assemble preview artifact
+        run: |
+          cp preview-gallery/index.html build/ui-preview/index.html
+          cp app/androidApp/build/outputs/apk/debug/androidApp-universal-debug.apk \
+            build/ui-preview/Bema-UI-Preview.apk
+          printf 'commit=%s\nrun=%s\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" \
+            > build/ui-preview/build-info.txt
+          test -f build/ui-preview/01-timeline.png
+          test -f build/ui-preview/02-detail.png
+          test -f build/ui-preview/03-composer.png
+          test -f build/ui-preview/04-accounts.png
+
+      - name: Upload UI preview
+        uses: actions/upload-artifact@v7
+        with:
+          name: bema-ui-preview-${{ github.sha }}
+          path: build/ui-preview
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload test diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: bema-ui-preview-diagnostics-${{ github.sha }}
+          path: |
+            app/androidApp/build/reports/androidTests
+            app/androidApp/build/outputs/androidTest-results
+          if-no-files-found: ignore
+          retention-days: 7

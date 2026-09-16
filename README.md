@@ -29,11 +29,24 @@ cd app/iosApp && xcodegen generate
 xcodebuild -scheme Bema -sdk iphonesimulator build
 ```
 
+## UI preview
+
+The [`UI Preview`](./.github/workflows/ui-preview.yml) workflow runs the real Compose UI on an
+Android emulator. Trigger it from GitHub Actions or push a UI-related change, then download the
+`bema-ui-preview-<commit>` artifact. It contains:
+
+- `index.html` and four emulator screenshots for the timeline, memo detail, composer, and account switcher;
+- `Bema-UI-Preview.apk`, a debug build with a second launcher named **Bema UI Preview** for interactive review;
+- `build-info.txt` with the source commit and workflow run ID.
+
+The catalog uses deterministic fixture data but renders the production `BemaMemosApp`, so preview
+screens cannot drift into a separately maintained implementation.
+
 ## CI and releases
 
 [`ci.yml`](./.github/workflows/ci.yml) validates the Gradle wrapper, runs `androidCheck`,
-and builds the iOS app; [`codeql.yml`](./.github/workflows/codeql.yml) runs CodeQL
-quality/security analysis.
+and builds the iOS app; [`ui-preview.yml`](./.github/workflows/ui-preview.yml) captures the Android
+UI catalog; [`codeql.yml`](./.github/workflows/codeql.yml) runs CodeQL quality/security analysis.
 
 [release-please](https://github.com/googleapis/release-please) turns
 [Conventional Commits](https://www.conventionalcommits.org/) into a release PR.

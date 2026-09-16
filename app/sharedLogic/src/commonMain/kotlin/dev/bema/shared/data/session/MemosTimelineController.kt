@@ -57,15 +57,37 @@ data class MemosAppState(
     val canLoadMore: Boolean get() = nextPageToken.isNotBlank() && !isLoadingMore
 }
 
+interface MemosUiController {
+    val state: StateFlow<MemosAppState>
+
+    suspend fun addAccount(instanceUrl: String, username: String, password: String)
+    suspend fun selectAccount(accountId: String)
+    suspend fun refreshTimeline(filter: String = "")
+    suspend fun loadMore()
+    suspend fun publish(
+        content: String,
+        visibility: Visibility = Visibility.PRIVATE,
+        pendingAttachments: List<PendingAttachment> = emptyList()
+    )
+    suspend fun openMemo(name: String)
+    fun closeMemo()
+    suspend fun comment(content: String)
+    suspend fun react(memo: Memo, reactionType: String)
+    fun siteLogoUrl(): String
+    fun accountLogoUrl(account: MemosAccount): String
+    suspend fun avatarBytes(user: User): ByteArray?
+    suspend fun attachmentBytes(attachment: Attachment, thumbnail: Boolean = false): ByteArray?
+}
+
 class MemosTimelineController(
     private val keyValueStore: KeyValueStore = PlatformKeyValueStore
-) {
+) : MemosUiController {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = false }
     private val sessions = mutableMapOf<String, AccountSession>()
     private val _state = MutableStateFlow(loadState())
-    val state: StateFlow<MemosAppState> = _state
+    override val state: StateFlow<MemosAppState> = _state
 
-    suspend fun addAccount(instanceUrl: String, username: String, password: String) {
+    override suspend fun addAccount(instanceUrl: String, username: String, password: String) {
         val normalized = normalizeInstanceUrl(instanceUrl)
         require(normalized.isNotBlank()) { "Instance URL is required" }
         require(username.isNotBlank()) { "Username is required" }
@@ -99,14 +121,14 @@ class MemosTimelineController(
                 )
             }
             persistAccounts()
-            refreshTimeline()
+            refreshTimeline("")
         }.onFailure { error ->
             _state.update { it.copy(error = error.message ?: "Sign in failed") }
         }
         setBusy(isLoading = false)
     }
 
-    suspend fun selectAccount(accountId: String) {
+    override suspend fun selectAccount(accountId: String) {
         if (_state.value.activeAccountId == accountId) return
         require(_state.value.accounts.any { it.id == accountId }) { "Unknown account" }
         _state.update {
@@ -120,7 +142,7 @@ class MemosTimelineController(
             )
         }
         persistAccounts()
-        refreshTimeline()
+        refreshTimeline("")
     }
 
     suspend fun removeAccount(accountId: String) {
@@ -143,10 +165,10 @@ class MemosTimelineController(
             )
         }
         persistAccounts()
-        if (_state.value.activeAccountId.isNotBlank()) refreshTimeline()
+        if (_state.value.activeAccountId.isNotBlank()) refreshTimeline("")
     }
 
-    suspend fun refreshTimeline(filter: String = "") {
+    override suspend fun refreshTimeline(filter: String) {
         val session = activeSessionOrNull() ?: return
         setBusy(isLoading = true)
         runCatching {
@@ -166,7 +188,7 @@ class MemosTimelineController(
         setBusy(isLoading = false)
     }
 
-    suspend fun loadMore() {
+    override suspend fun loadMore() {
         val session = activeSessionOrNull() ?: return
         val token = _state.value.nextPageToken
         if (token.isBlank() || _state.value.isLoadingMore) return
@@ -186,10 +208,10 @@ class MemosTimelineController(
         _state.update { it.copy(isLoadingMore = false) }
     }
 
-    suspend fun publish(
+    override suspend fun publish(
         content: String,
-        visibility: Visibility = Visibility.PRIVATE,
-        pendingAttachments: List<PendingAttachment> = emptyList()
+        visibility: Visibility,
+        pendingAttachments: List<PendingAttachment>
     ) {
         val body = content.trim()
         if (body.isBlank() && pendingAttachments.isEmpty()) return
@@ -205,7 +227,7 @@ class MemosTimelineController(
         _state.update { it.copy(isPublishing = false) }
     }
 
-    suspend fun openMemo(name: String) {
+    override suspend fun openMemo(name: String) {
         val session = activeSessionOrNull() ?: return
         setBusy(isLoading = true)
         runCatching {
@@ -216,11 +238,11 @@ class MemosTimelineController(
         setBusy(isLoading = false)
     }
 
-    fun closeMemo() {
+    override fun closeMemo() {
         _state.update { it.copy(selectedMemo = null, selectedComments = emptyList()) }
     }
 
-    suspend fun comment(content: String) {
+    override suspend fun comment(content: String) {
         val parent = _state.value.selectedMemo ?: return
         val body = content.trim()
         if (body.isBlank()) return
@@ -231,7 +253,7 @@ class MemosTimelineController(
         }.onFailure { error -> _state.update { it.copy(error = error.message ?: "Comment failed") } }
     }
 
-    suspend fun react(memo: Memo, reactionType: String) {
+    override suspend fun react(memo: Memo, reactionType: String) {
         val session = activeSessionOrNull() ?: return
         runCatching {
             val reaction = session.api.upsertReaction(memo.name, reactionType)
@@ -249,21 +271,21 @@ class MemosTimelineController(
 
     fun memoCreator(memo: Memo): User? = _state.value.userProfiles[memo.creator.substringAfterLast('/')]
 
-    fun siteLogoUrl(): String {
+    override fun siteLogoUrl(): String {
         val account = _state.value.activeAccount ?: return ""
         return accountLogoUrl(account)
     }
 
-    fun accountLogoUrl(account: MemosAccount): String =
+    override fun accountLogoUrl(account: MemosAccount): String =
         sessions[account.id]?.api?.assetUrl(account.siteLogoUrl).orEmpty()
 
-    suspend fun avatarBytes(user: User): ByteArray? =
+    override suspend fun avatarBytes(user: User): ByteArray? =
         runCatching {
             val session = activeSessionOrNull() ?: return@runCatching null
             session.api.getUrlBytes(session.api.userAvatarUrl(user.username))
         }.getOrNull()
 
-    suspend fun attachmentBytes(attachment: Attachment, thumbnail: Boolean = false): ByteArray? =
+    override suspend fun attachmentBytes(attachment: Attachment, thumbnail: Boolean): ByteArray? =
         runCatching { activeSessionOrNull()?.api?.getAttachmentBytes(attachment, thumbnail) }.getOrNull()
 
     fun attachmentUrl(memo: Memo, attachmentName: String, thumbnail: Boolean = false): String {
