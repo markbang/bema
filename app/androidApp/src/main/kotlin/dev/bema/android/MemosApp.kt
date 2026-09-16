@@ -21,20 +21,21 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TextFieldDefaults
+import top.yukonga.miuix.kmp.basic.Button as MiuixButton
+import top.yukonga.miuix.kmp.basic.FloatingActionButton as MiuixFloatingActionButton
+import top.yukonga.miuix.kmp.basic.HorizontalDivider as MiuixHorizontalDivider
+import top.yukonga.miuix.kmp.basic.IconButton as MiuixIconButton
+import top.yukonga.miuix.kmp.basic.Scaffold as MiuixScaffold
+import top.yukonga.miuix.kmp.basic.Surface as MiuixSurface
+import top.yukonga.miuix.kmp.basic.TextField as MiuixTextField
+import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.theme.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -74,20 +75,24 @@ private val Accent = Color(0xFF1D9BF0)
 @Composable
 fun BemaMemosApp(controller: MemosTimelineController = remember { MemosTimelineController() }) {
     val state by controller.state.collectAsState()
-    val darkColors = MaterialTheme.colorScheme.copy(
-        background = Ink,
-        surface = Ink,
-        surfaceVariant = InkElevated,
-        onBackground = TextPrimary,
-        onSurface = TextPrimary,
-        onSurfaceVariant = TextSecondary,
+    val darkColors = darkColorScheme(
         primary = Accent,
-        outlineVariant = InkLine
+        background = Ink,
+        onBackground = TextPrimary,
+        surface = Ink,
+        onSurface = TextPrimary,
+        surfaceVariant = InkElevated,
+        outline = InkLine,
+        dividerLine = InkLine,
+        onSurfaceVariantSummary = TextSecondary,
+        onSurfaceVariantActions = TextSecondary
     )
-    MaterialTheme(colorScheme = darkColors) {
-        Surface(color = Ink, modifier = Modifier.fillMaxSize()) {
-            if (state.activeAccount == null) SignInScreen(state, controller)
-            else TimelineShell(state, controller)
+    MaterialTheme {
+        MiuixTheme(colors = darkColors) {
+            MiuixSurface(color = Ink, modifier = Modifier.fillMaxSize()) {
+                if (state.activeAccount == null) SignInScreen(state, controller)
+                else TimelineShell(state, controller)
+            }
         }
     }
 }
@@ -133,11 +138,11 @@ private fun SignInScreen(state: MemosAppState, controller: MemosTimelineControll
         Spacer(Modifier.height(12.dp))
         DarkField(password, { password = it }, "Password", secure = true)
         Spacer(Modifier.height(20.dp))
-        Button(
+        MiuixButton(
             enabled = !state.isLoading,
             onClick = { scope.launch { controller.addAccount(instance, username, password) } },
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(24.dp)
+            cornerRadius = 24.dp
         ) { Text(if (state.isLoading) "Connecting…" else "Sign in") }
         state.error?.let { Text(it, color = Color(0xFFFF6B6B), modifier = Modifier.padding(top = 14.dp)) }
     }
@@ -145,23 +150,13 @@ private fun SignInScreen(state: MemosAppState, controller: MemosTimelineControll
 
 @Composable
 private fun DarkField(value: String, onValueChange: (String) -> Unit, label: String, placeholder: String = "", secure: Boolean = false) {
-    OutlinedTextField(
+    MiuixTextField(
         value = value,
         onValueChange = onValueChange,
-        label = { Text(label) },
-        placeholder = { Text(placeholder) },
+        label = if (placeholder.isBlank()) label else placeholder,
+        useLabelAsPlaceholder = placeholder.isNotBlank(),
         singleLine = true,
         visualTransformation = if (secure) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
-        colors = TextFieldDefaults.colors(
-            focusedContainerColor = InkElevated,
-            unfocusedContainerColor = InkElevated,
-            focusedTextColor = TextPrimary,
-            unfocusedTextColor = TextPrimary,
-            focusedLabelColor = Accent,
-            unfocusedLabelColor = TextSecondary,
-            focusedIndicatorColor = Accent,
-            unfocusedIndicatorColor = InkLine
-        ),
         modifier = Modifier.fillMaxWidth()
     )
 }
@@ -171,14 +166,14 @@ private fun TimelineShell(state: MemosAppState, controller: MemosTimelineControl
     val scope = rememberCoroutineScope()
     var showComposer by remember { mutableStateOf(false) }
     var showAccounts by remember { mutableStateOf(false) }
-    Scaffold(
+    MiuixScaffold(
         containerColor = Ink,
         topBar = {
             TimelineHeader(state, controller) { showAccounts = true }
         },
         bottomBar = { BottomNav(onAdd = { showComposer = true }) },
         floatingActionButton = {
-            FloatingActionButton(onClick = { showComposer = true }, containerColor = Accent, contentColor = Color.White, shape = CircleShape) {
+            MiuixFloatingActionButton(onClick = { showComposer = true }, containerColor = Accent, shape = CircleShape) {
                 Text("+", style = MaterialTheme.typography.headlineMedium)
             }
         }
@@ -205,8 +200,8 @@ private fun TimelineHeader(state: MemosAppState, controller: MemosTimelineContro
             Text("For you", color = TextPrimary, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
             Text(account?.siteTitle ?: "Memos", color = TextSecondary, style = MaterialTheme.typography.labelMedium)
         }
-        IconButton(onClick = onAccounts) { Text("⌄", color = TextPrimary, style = MaterialTheme.typography.headlineSmall) }
-        IconButton(onClick = { }) { Text("✦", color = TextPrimary, style = MaterialTheme.typography.titleLarge) }
+        MiuixIconButton(onClick = onAccounts) { Text("⌄", color = TextPrimary, fontSize = MaterialTheme.typography.headlineSmall.fontSize) }
+        MiuixIconButton(onClick = { }) { Text("✦", color = TextPrimary, fontSize = MaterialTheme.typography.titleLarge.fontSize) }
     }
 }
 
@@ -273,7 +268,7 @@ private fun MemoTweet(memo: Memo, user: User?, controller: MemosTimelineControll
             }
         }
     }
-    HorizontalDivider(color = InkLine, thickness = 1.dp)
+    MiuixHorizontalDivider(color = InkLine, thickness = 1.dp)
 }
 
 @Composable

@@ -95,6 +95,7 @@ dependencies {
     implementation(libs.compose.foundation)
     implementation(libs.compose.material3)
     implementation(libs.compose.activity)
+    implementation(libs.miuix.ui)
 
     // Coil
     implementation(libs.coil.compose)
