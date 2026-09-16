@@ -46,3 +46,17 @@ Kotlin 2.4.20, AGP 9.4.0, Gradle 9.7.1, compileSdk 36, minSdk 24, targetSdk 36.
 [`.github/workflows/ci.yml`](./.github/workflows/ci.yml) verifies the Gradle
 wrapper, runs `./gradlew androidCheck` on ubuntu, and builds the UIKit app with
 `xcodegen` + `xcodebuild` on macOS.
+
+## Releasing
+
+[release-please](https://github.com/googleapis/release-please) keeps a release PR
+up to date from [Conventional Commits](https://www.conventionalcommits.org/).
+Merging it bumps `version.txt` + `CHANGELOG.md` and creates the `vX.Y.Z` tag,
+which triggers [`.github/workflows/release.yml`](./.github/workflows/release.yml)
+to build and attach the artifacts: a release APK + AAB for Android and an
+unsigned `.xcarchive` for iOS. Pushing a tag by hand does the same, and
+`workflow_dispatch` builds the artifacts without publishing them.
+
+APKs are signed when the `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`,
+`ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD` secrets exist; without them the
+APK is unsigned (the `.aab` is what Play wants anyway).
