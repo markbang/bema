@@ -1,0 +1,23 @@
+version: 2
+updates:
+  # Actions pinned in .github/workflows.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  # Gradle dependencies declared in gradle/libs.versions.toml.
+  - package-ecosystem: gradle
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # Minor/patch bumps land as one PR; majors stay separate so they can be
+      # reviewed (and migrated) on their own.
+      gradle:
+        patterns: ["*"]
+        update-types: [minor, patch]
