@@ -10,7 +10,7 @@ settings:
     SWIFT_VERSION: "5.0"
     # Defaults for local builds; the release workflow overrides them from
     # version.txt (see .github/workflows/release.yml).
-    MARKETING_VERSION: "0.1.0"
+    MARKETING_VERSION: "0.0.1"
     CURRENT_PROJECT_VERSION: "1"
 
 targets:
@@ -23,8 +23,12 @@ targets:
       path: iosApp/Info.plist
       properties:
         CFBundleDisplayName: Bema
+        CFBundleIcons: {}
+        CFBundleIcons~ipad: {}
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
@@ -32,6 +36,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.bema.ios
         TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         # The Gradle build phase below shells out, so script sandboxing must be off
         # (Xcode enables it by default for new projects).
         ENABLE_USER_SCRIPT_SANDBOXING: NO

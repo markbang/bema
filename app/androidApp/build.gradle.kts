@@ -4,6 +4,7 @@ plugins {
     // Kotlin support is built into AGP 9, so org.jetbrains.kotlin.android must
     // NOT be applied here.
     alias(libs.plugins.androidApplication)
+    alias(libs.plugins.composeCompiler)
 }
 
 // version.txt is the single source of truth for the app version; release-please
@@ -65,6 +66,10 @@ android {
             }
         }
     }
+
+    buildFeatures {
+        compose = true
+    }
 }
 
 kotlin {
@@ -75,4 +80,13 @@ kotlin {
 
 dependencies {
     implementation(project(":app:sharedLogic"))
+
+    // Compose
+    implementation(libs.compose.ui)
+    implementation(libs.compose.foundation)
+    implementation(libs.compose.material3)
+    implementation(libs.compose.activity)
+
+    // Coil
+    implementation(libs.coil.compose)
 }
