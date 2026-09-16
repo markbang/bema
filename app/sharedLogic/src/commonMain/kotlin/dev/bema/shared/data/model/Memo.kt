@@ -150,6 +150,13 @@ enum class UserState {
 }
 
 @Serializable
+data class AttachmentUpload(
+    val filename: String,
+    val content: ByteArray,
+    val type: String
+)
+
+@Serializable
 data class MemoInput(
     val content: String,
     val visibility: Visibility,
@@ -230,6 +237,34 @@ data class MemoMentionNotification(
     val relatedMemo: String = "",
     val memoSnippet: String = "",
     val relatedMemoSnippet: String = ""
+)
+
+@Serializable
+data class BatchGetUsersRequest(
+    val usernames: List<String>
+)
+
+@Serializable
+data class BatchGetUsersResponse(
+    val users: List<User> = emptyList()
+)
+
+@Serializable
+data class InstanceSetting(
+    val name: String = "",
+    val generalSetting: GeneralSetting? = null
+)
+
+@Serializable
+data class GeneralSetting(
+    val customProfile: CustomProfile? = null
+)
+
+@Serializable
+data class CustomProfile(
+    val title: String = "",
+    val description: String = "",
+    val logoUrl: String = ""
 )
 
 @Serializable

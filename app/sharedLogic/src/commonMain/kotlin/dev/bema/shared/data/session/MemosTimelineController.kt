@@ -19,6 +19,13 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 @Serializable
+data class PendingAttachment(
+    val filename: String,
+    val content: ByteArray,
+    val type: String
+)
+
+@Serializable
 data class MemosAccount(
     val id: String,
     val instanceUrl: String,
@@ -26,6 +33,8 @@ data class MemosAccount(
     val userName: String = "",
     val displayName: String = "",
     val avatarUrl: String = "",
+    val siteTitle: String = "Memos",
+    val siteLogoUrl: String = "",
     val lastSignedInAt: Instant? = null
 ) {
     val visibleName: String get() = displayName.ifBlank { username }
@@ -41,7 +50,8 @@ data class MemosAppState(
     val isLoading: Boolean = false,
     val isLoadingMore: Boolean = false,
     val isPublishing: Boolean = false,
-    val error: String? = null
+    val error: String? = null,
+    val userProfiles: Map<String, User> = emptyMap()
 ) {
     val activeAccount: MemosAccount? get() = accounts.firstOrNull { it.id == activeAccountId }
     val canLoadMore: Boolean get() = nextPageToken.isNotBlank() && !isLoadingMore
@@ -67,10 +77,13 @@ class MemosTimelineController(
             val draft = MemosAccount(id = accountId, instanceUrl = normalized, username = username.trim())
             val session = sessions.getOrPut(accountId) { AccountSession(draft) }
             val response = session.signIn(username.trim(), password)
+            val branding = session.loadBranding()
             val account = draft.copy(
                 userName = response.user.name,
                 displayName = response.user.visibleName,
                 avatarUrl = response.user.avatarUrl,
+                siteTitle = branding.first,
+                siteLogoUrl = branding.second,
                 lastSignedInAt = Clock.System.now()
             )
             sessions[accountId] = session
@@ -138,12 +151,14 @@ class MemosTimelineController(
         setBusy(isLoading = true)
         runCatching {
             val response = session.api.listMemos(filter = filter)
+            val profiles = session.loadUsers(response.memos)
             _state.update {
                 it.copy(
                     timeline = response.memos,
                     nextPageToken = response.nextPageToken,
                     selectedMemo = null,
                     selectedComments = emptyList(),
+                    userProfiles = profiles,
                     error = null
                 )
             }
@@ -158,10 +173,12 @@ class MemosTimelineController(
         _state.update { it.copy(isLoadingMore = true) }
         runCatching {
             val response = session.api.listMemos(pageToken = token)
+            val profiles = session.loadUsers(response.memos)
             _state.update {
                 it.copy(
                     timeline = it.timeline + response.memos,
                     nextPageToken = response.nextPageToken,
+                    userProfiles = it.userProfiles + profiles,
                     error = null
                 )
             }
@@ -169,13 +186,20 @@ class MemosTimelineController(
         _state.update { it.copy(isLoadingMore = false) }
     }
 
-    suspend fun publish(content: String, visibility: Visibility = Visibility.PRIVATE) {
+    suspend fun publish(
+        content: String,
+        visibility: Visibility = Visibility.PRIVATE,
+        pendingAttachments: List<PendingAttachment> = emptyList()
+    ) {
         val body = content.trim()
-        if (body.isBlank()) return
+        if (body.isBlank() && pendingAttachments.isEmpty()) return
         val session = activeSessionOrNull() ?: return
         _state.update { it.copy(isPublishing = true) }
         runCatching {
-            val memo = session.api.createMemo(body, visibility)
+            val attachments = pendingAttachments.map { upload ->
+                session.api.createAttachment(upload.filename, upload.content, upload.type)
+            }
+            val memo = session.api.createMemo(body, visibility, attachments = attachments)
             _state.update { it.copy(timeline = listOf(memo) + it.timeline, error = null) }
         }.onFailure { error -> _state.update { it.copy(error = error.message ?: "Publish failed") } }
         _state.update { it.copy(isPublishing = false) }
@@ -222,6 +246,22 @@ class MemosTimelineController(
             }
         }.onFailure { error -> _state.update { it.copy(error = error.message ?: "Reaction failed") } }
     }
+
+    fun memoCreator(memo: Memo): User? = _state.value.userProfiles[memo.creator.substringAfterLast('/')]
+
+    fun siteLogoUrl(): String {
+        val account = _state.value.activeAccount ?: return ""
+        return accountLogoUrl(account)
+    }
+
+    fun accountLogoUrl(account: MemosAccount): String =
+        sessions[account.id]?.api?.assetUrl(account.siteLogoUrl).orEmpty()
+
+    suspend fun avatarBytes(user: User): ByteArray? =
+        runCatching {
+            val session = activeSessionOrNull() ?: return@runCatching null
+            session.api.getUrlBytes(session.api.userAvatarUrl(user.username))
+        }.getOrNull()
 
     suspend fun attachmentBytes(attachment: Attachment, thumbnail: Boolean = false): ByteArray? =
         runCatching { activeSessionOrNull()?.api?.getAttachmentBytes(attachment, thumbnail) }.getOrNull()
@@ -272,6 +312,16 @@ class MemosTimelineController(
         suspend fun signIn(username: String, password: String) = api.signIn(username, password).also {
             accessToken = it.accessToken
         }
+
+        suspend fun loadBranding(): Pair<String, String> = runCatching {
+            val profile = api.generalSetting().generalSetting?.customProfile
+            (profile?.title?.ifBlank { "Memos" } ?: "Memos") to (profile?.logoUrl.orEmpty())
+        }.getOrDefault("Memos" to "")
+
+        suspend fun loadUsers(memos: List<Memo>): Map<String, User> = runCatching {
+            api.batchGetUsers(memos.map { it.creator.substringAfterLast('/') })
+                .associateBy { it.username }
+        }.getOrDefault(emptyMap())
 
         suspend fun refreshToken(): String? = runCatching {
             val response = api.refresh()

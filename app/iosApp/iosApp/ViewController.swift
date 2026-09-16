@@ -1,6 +1,8 @@
 import CryptoKit
+import PhotosUI
 import Security
 import UIKit
+import UniformTypeIdentifiers
 
 struct NativeMemo: Codable, Hashable {
     var name: String = ""
@@ -48,6 +50,8 @@ struct NativeAccount: Codable, Hashable {
     var userName: String
     var displayName: String
     var avatarUrl: String
+    var siteTitle: String = "Memos"
+    var siteLogoUrl: String = ""
 
     var visibleName: String { displayName.isEmpty ? username : displayName }
 }
@@ -87,9 +91,49 @@ struct ListCommentsResponse: Codable {
     var nextPageToken: String?
 }
 
+private struct NativeAttachmentUpload: Codable {
+    var filename: String
+    var content: Data
+    var type: String
+}
+
+private struct NativeAttachmentReference: Codable {
+    var name: String
+}
+
 private struct MemoBody: Codable {
     var content: String
     var visibility: String
+    var attachments: [NativeAttachmentReference] = []
+}
+
+struct PendingNativeAttachment {
+    var filename: String
+    var data: Data
+    var type: String
+}
+
+private struct NativeCustomProfile: Codable {
+    var title: String?
+    var description: String?
+    var logoUrl: String?
+}
+
+private struct NativeGeneralSetting: Codable {
+    var customProfile: NativeCustomProfile?
+}
+
+private struct NativeInstanceSetting: Codable {
+    var name: String
+    var generalSetting: NativeGeneralSetting?
+}
+
+private struct BatchUsersBody: Codable {
+    var usernames: [String]
+}
+
+private struct BatchUsersResponse: Codable {
+    var users: [NativeUser]
 }
 
 private struct ReactionBody: Codable {
@@ -243,6 +287,28 @@ final class NativeMemosAPI {
         accessToken = response.accessToken
     }
 
+    func generalSetting() async throws -> NativeInstanceSetting {
+        try await send(method: "GET", path: "/api/v1/instance/settings/GENERAL", authenticated: true)
+    }
+
+    func batchGetUsers(_ usernames: [String]) async throws -> [NativeUser] {
+        guard !usernames.isEmpty else { return [] }
+        let response: BatchUsersResponse = try await send(method: "POST", path: "/api/v1/users:batchGet", body: BatchUsersBody(usernames: Array(Set(usernames)).prefix(100).map { $0 }), authenticated: true)
+        return response.users
+    }
+
+    func userAvatarURL(username: String) throws -> URL {
+        try makeURL(path: "/file/users/\(username)/avatar")
+    }
+
+    func assetURL(_ value: String) throws -> URL {
+        if value.hasPrefix("http://") || value.hasPrefix("https://") || value.hasPrefix("data:") {
+            guard let url = URL(string: value) else { throw NativeClientError.invalidURL }
+            return url
+        }
+        return try makeURL(path: value)
+    }
+
     func listMemos(pageToken: String = "") async throws -> ListMemosResponse {
         try await send(
             method: "GET",
@@ -260,11 +326,15 @@ final class NativeMemosAPI {
         try await send(method: "GET", path: "/api/v1/\(name)", authenticated: true)
     }
 
-    func createMemo(content: String, visibility: String) async throws -> NativeMemo {
+    func uploadAttachment(_ attachment: PendingNativeAttachment) async throws -> NativeAttachment {
+        try await send(method: "POST", path: "/api/v1/attachments", body: NativeAttachmentUpload(filename: attachment.filename, content: attachment.data, type: attachment.type), authenticated: true)
+    }
+
+    func createMemo(content: String, visibility: String, attachments: [NativeAttachment] = []) async throws -> NativeMemo {
         try await send(
             method: "POST",
             path: "/api/v1/memos",
-            body: MemoBody(content: content, visibility: visibility),
+            body: MemoBody(content: content, visibility: visibility, attachments: attachments.map { NativeAttachmentReference(name: $0.name) }),
             authenticated: true
         )
     }
@@ -302,6 +372,24 @@ final class NativeMemosAPI {
             path: "/file/attachments/\(attachment.uid)/\(attachment.filename)",
             query: thumbnail ? [URLQueryItem(name: "thumbnail", value: "true")] : []
         )
+    }
+
+    func loadAssetImage(_ value: String) async -> UIImage? {
+        guard let url = try? makeURL(path: value) else { return nil }
+        var request = URLRequest(url: url)
+        if let cookie = store.cookie(for: account) { request.setValue(cookie, forHTTPHeaderField: "Cookie") }
+        if let token = accessToken { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        guard let (data, _) = try? await session.data(for: request) else { return nil }
+        return UIImage(data: data)
+    }
+
+    func loadUserAvatar(_ user: NativeUser) async -> UIImage? {
+        guard let url = try? userAvatarURL(username: user.username) else { return nil }
+        var request = URLRequest(url: url)
+        if let cookie = store.cookie(for: account) { request.setValue(cookie, forHTTPHeaderField: "Cookie") }
+        if let token = accessToken { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        guard let (data, _) = try? await session.data(for: request) else { return nil }
+        return UIImage(data: data)
     }
 
     func loadAttachmentImage(_ attachment: NativeAttachment) async -> UIImage? {
@@ -419,17 +507,21 @@ final class ViewController: UIViewController, UITableViewDataSource, UITableView
     private let store = NativeAccountStore()
     private var api: NativeMemosAPI?
     private var memos: [NativeMemo] = []
+    private var usersByUsername: [String: NativeUser] = [:]
     private var nextPageToken = ""
     private var isLoading = false
     private let tableView = UITableView(frame: .zero, style: .plain)
     private let composerView = ComposerView()
+    private let floatingPostButton = UIButton(type: .system)
+    private let tabBar = UITabBar()
 
     override func viewDidLoad() {
         super.viewDidLoad()
         title = "Bema"
-        view.backgroundColor = .systemBackground
+        view.backgroundColor = UIColor.black
         configureNavigation()
         configureTable()
+        configureFloatingNavigation()
         activateCurrentAccount()
     }
 
@@ -442,14 +534,16 @@ final class ViewController: UIViewController, UITableViewDataSource, UITableView
     }
 
     private func configureTable() {
-        composerView.onPost = { [weak self] content, visibility in
-            Task { await self?.post(content: content, visibility: visibility) }
+        composerView.onPost = { [weak self] content, visibility, attachments in
+            Task { await self?.post(content: content, visibility: visibility, attachments: attachments) }
         }
         composerView.translatesAutoresizingMaskIntoConstraints = false
         tableView.translatesAutoresizingMaskIntoConstraints = false
+        composerView.isHidden = true
         tableView.dataSource = self
         tableView.delegate = self
         tableView.separatorInset = .zero
+        tableView.backgroundColor = .black
         tableView.keyboardDismissMode = .interactive
         tableView.register(MemoTableViewCell.self, forCellReuseIdentifier: MemoTableViewCell.reuseIdentifier)
         view.addSubview(composerView)
@@ -458,10 +552,41 @@ final class ViewController: UIViewController, UITableViewDataSource, UITableView
             composerView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             composerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             composerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            tableView.topAnchor.constraint(equalTo: composerView.bottomAnchor),
+            tableView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+            tableView.bottomAnchor.constraint(equalTo: tabBar.topAnchor)
+        ])
+    }
+
+    private func configureFloatingNavigation() {
+        tabBar.translatesAutoresizingMaskIntoConstraints = false
+        tabBar.items = [
+            UITabBarItem(tabBarSystemItem: .favorites, tag: 0),
+            UITabBarItem(tabBarSystemItem: .search, tag: 1),
+            UITabBarItem(tabBarSystemItem: .bookmarks, tag: 2),
+            UITabBarItem(tabBarSystemItem: .more, tag: 3)
+        ]
+        tabBar.selectedItem = tabBar.items?.first
+        view.addSubview(tabBar)
+        NSLayoutConstraint.activate([
+            tabBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tabBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tabBar.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
+        floatingPostButton.translatesAutoresizingMaskIntoConstraints = false
+        floatingPostButton.setTitle("+", for: .normal)
+        floatingPostButton.titleLabel?.font = .systemFont(ofSize: 32, weight: .medium)
+        floatingPostButton.tintColor = .white
+        floatingPostButton.backgroundColor = .systemBlue
+        floatingPostButton.layer.cornerRadius = 28
+        floatingPostButton.addTarget(self, action: #selector(composeTapped), for: .touchUpInside)
+        view.addSubview(floatingPostButton)
+        NSLayoutConstraint.activate([
+            floatingPostButton.widthAnchor.constraint(equalToConstant: 56),
+            floatingPostButton.heightAnchor.constraint(equalToConstant: 56),
+            floatingPostButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -18),
+            floatingPostButton.bottomAnchor.constraint(equalTo: tabBar.topAnchor, constant: -18)
         ])
     }
 
@@ -471,10 +596,13 @@ final class ViewController: UIViewController, UITableViewDataSource, UITableView
             presentSignIn(animated: false)
             return
         }
-        composerView.isHidden = false
-        navigationItem.prompt = "\(account.visibleName) @ \(shortHost(account.instanceUrl))"
+        composerView.isHidden = true
+        navigationItem.titleView = SiteTitleView(title: account.siteTitle, logoURL: account.siteLogoUrl)
         api = try? NativeMemosAPI(account: account, store: store)
-        Task { await loadFirstPage() }
+        Task {
+            await loadBranding()
+            await loadFirstPage()
+        }
     }
 
     private func loadFirstPage() async {
@@ -484,6 +612,7 @@ final class ViewController: UIViewController, UITableViewDataSource, UITableView
             let response = try await api.listMemos()
             memos = response.memos ?? []
             nextPageToken = response.nextPageToken ?? ""
+            await loadProfiles(for: memos)
             tableView.reloadData()
         } catch {
             showError(error)
@@ -497,8 +626,10 @@ final class ViewController: UIViewController, UITableViewDataSource, UITableView
         Task {
             do {
                 let response = try await api.listMemos(pageToken: nextPageToken)
-                memos.append(contentsOf: response.memos ?? [])
+                let newMemos = response.memos ?? []
+                memos.append(contentsOf: newMemos)
                 nextPageToken = response.nextPageToken ?? ""
+                await loadProfiles(for: newMemos)
                 tableView.reloadData()
             } catch {
                 showError(error)
@@ -507,10 +638,32 @@ final class ViewController: UIViewController, UITableViewDataSource, UITableView
         }
     }
 
-    private func post(content: String, visibility: String) async {
+    private func loadBranding() async {
+        guard let api, let setting = try? await api.generalSetting() else { return }
+        guard let profile = setting.generalSetting?.customProfile else { return }
+        guard let account = store.activeAccount else { return }
+        let resolvedLogo = profile.logoUrl.flatMap { try? api.assetURL($0) }?.absoluteString ?? ""
+        let updated = NativeAccount(id: account.id, instanceUrl: account.instanceUrl, username: account.username, userName: account.userName, displayName: account.displayName, avatarUrl: account.avatarUrl, siteTitle: profile.title ?? "Memos", siteLogoUrl: resolvedLogo)
+        store.upsert(updated)
+        navigationItem.titleView = SiteTitleView(title: updated.siteTitle, logoURL: updated.siteLogoUrl)
+    }
+
+    private func loadProfiles(for memos: [NativeMemo]) async {
+        guard let api else { return }
+        let names = memos.map { $0.creator.split(separator: "/").last.map(String.init) ?? "" }
+        if let users = try? await api.batchGetUsers(names) { users.forEach { usersByUsername[$0.username] = $0 } }
+    }
+
+    private func post(content: String, visibility: String, attachments: [PendingNativeAttachment] = []) async {
         guard let api else { return }
         do {
-            let memo = try await api.createMemo(content: content, visibility: visibility)
+            var uploaded: [NativeAttachment] = []
+            for attachment in attachments {
+                uploaded.append(try await api.uploadAttachment(attachment))
+            }
+            let memo = try await api.createMemo(content: content, visibility: visibility, attachments: uploaded)
+            composerView.isHidden = true
+            floatingPostButton.isHidden = false
             memos.insert(memo, at: 0)
             tableView.reloadData()
         } catch {
@@ -526,10 +679,16 @@ final class ViewController: UIViewController, UITableViewDataSource, UITableView
         presentSignIn(animated: true)
     }
 
+    @objc private func composeTapped() {
+        composerView.isHidden = false
+        floatingPostButton.isHidden = true
+        view.bringSubviewToFront(composerView)
+    }
+
     @objc private func showAccounts() {
         let sheet = UIAlertController(title: "Accounts", message: nil, preferredStyle: .actionSheet)
         store.accounts.forEach { account in
-            sheet.addAction(UIAlertAction(title: "\(account.visibleName) @ \(shortHost(account.instanceUrl))", style: .default) { [weak self] _ in
+            sheet.addAction(UIAlertAction(title: "\(account.siteTitle) · \(account.visibleName)", style: .default) { [weak self] _ in
                 self?.store.select(account)
                 self?.memos.removeAll()
                 self?.tableView.reloadData()
@@ -556,7 +715,8 @@ final class ViewController: UIViewController, UITableViewDataSource, UITableView
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: MemoTableViewCell.reuseIdentifier, for: indexPath) as! MemoTableViewCell
         let memo = memos[indexPath.row]
-        cell.configure(memo: memo, api: api) { [weak self] reaction in
+        let username = memo.creator.split(separator: "/").last.map(String.init) ?? ""
+        cell.configure(memo: memo, user: usersByUsername[username], api: api) { [weak self] reaction in
             Task { await self?.react(to: memo, reaction: reaction) }
         }
         return cell
@@ -684,6 +844,46 @@ final class SignInViewController: UIViewController {
     }
 }
 
+final class SiteTitleView: UIView {
+    private let imageView = UIImageView()
+    private let titleLabel = UILabel()
+    private var task: Task<Void, Never>?
+
+    init(title: String, logoURL: String) {
+        super.init(frame: .zero)
+        titleLabel.text = title
+        titleLabel.font = .preferredFont(forTextStyle: .headline)
+        titleLabel.textColor = .label
+        imageView.layer.cornerRadius = 10
+        imageView.clipsToBounds = true
+        imageView.backgroundColor = .secondarySystemFill
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        let stack = UIStackView(arrangedSubviews: [imageView, titleLabel])
+        stack.axis = .horizontal
+        stack.spacing = 8
+        stack.alignment = .center
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            imageView.widthAnchor.constraint(equalToConstant: 22),
+            imageView.heightAnchor.constraint(equalToConstant: 22),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+        if let url = URL(string: logoURL), !logoURL.isEmpty {
+            task = Task { [weak self] in
+                guard let (data, _) = try? await URLSession.shared.data(from: url), let image = UIImage(data: data) else { return }
+                guard !Task.isCancelled else { return }
+                self?.imageView.image = image
+            }
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+}
+
 final class MemoDetailViewController: UIViewController, UITableViewDataSource {
     private var memo: NativeMemo
     private let api: NativeMemosAPI?
@@ -766,7 +966,7 @@ final class MemoDetailViewController: UIViewController, UITableViewDataSource {
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: MemoTableViewCell.reuseIdentifier, for: indexPath) as! MemoTableViewCell
-        cell.configure(memo: comments[indexPath.row], api: api, onReact: nil)
+        cell.configure(memo: comments[indexPath.row], user: nil, api: api, onReact: nil)
         return cell
     }
 
@@ -777,11 +977,13 @@ final class MemoDetailViewController: UIViewController, UITableViewDataSource {
     }
 }
 
-final class ComposerView: UIView {
-    var onPost: ((String, String) -> Void)?
+final class ComposerView: UIView, PHPickerViewControllerDelegate {
+    var onPost: ((String, String, [PendingNativeAttachment]) -> Void)?
     private let textView = UITextView()
     private let visibility = UISegmentedControl(items: ["Private", "Protected", "Public"])
     private let postButton = UIButton(type: .system)
+    private let photoButton = UIButton(type: .system)
+    private var selectedAttachments: [PendingNativeAttachment] = []
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -799,7 +1001,9 @@ final class ComposerView: UIView {
         visibility.selectedSegmentIndex = 0
         postButton.setTitle("Post", for: .normal)
         postButton.addTarget(self, action: #selector(post), for: .touchUpInside)
-        let controls = UIStackView(arrangedSubviews: [visibility, postButton])
+        photoButton.setTitle("Add photos", for: .normal)
+        photoButton.addTarget(self, action: #selector(addPhotos), for: .touchUpInside)
+        let controls = UIStackView(arrangedSubviews: [photoButton, visibility, postButton])
         controls.axis = .horizontal
         controls.spacing = 12
         let stack = UIStackView(arrangedSubviews: [textView, controls])
@@ -818,26 +1022,54 @@ final class ComposerView: UIView {
 
     @objc private func post() {
         let text = textView.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        guard !text.isEmpty || !selectedAttachments.isEmpty else { return }
         let value = ["PRIVATE", "PROTECTED", "PUBLIC"][max(visibility.selectedSegmentIndex, 0)]
+        let attachments = selectedAttachments
         textView.text = ""
-        onPost?(text, value)
+        selectedAttachments.removeAll()
+        onPost?(text, value, attachments)
+    }
+
+    @objc private func addPhotos() {
+        guard let viewController = parentViewController else { return }
+        var configuration = PHPickerConfiguration(photoLibrary: .shared())
+        configuration.filter = .images
+        configuration.selectionLimit = 9
+        let picker = PHPickerViewController(configuration: configuration)
+        picker.delegate = self
+        viewController.present(picker, animated: true)
+    }
+
+    func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+        picker.dismiss(animated: true)
+        selectedAttachments.removeAll()
+        for result in results {
+            result.itemProvider.loadObject(ofClass: UIImage.self) { [weak self] object, _ in
+                guard let image = object as? UIImage, let data = image.jpegData(compressionQuality: 0.88) else { return }
+                DispatchQueue.main.async { self?.selectedAttachments.append(PendingNativeAttachment(filename: "photo-\(self?.selectedAttachments.count ?? 0).jpg", data: data, type: "image/jpeg")) }
+            }
+        }
     }
 }
 
 final class MemoTableViewCell: UITableViewCell {
     static let reuseIdentifier = "MemoTableViewCell"
     private let stack = UIStackView()
+    private let contentStack = UIStackView()
+    private let avatarView = UIImageView()
     private let metaLabel = UILabel()
     private let bodyLabel = UILabel()
     private let tagsLabel = UILabel()
-    private let previewImage = UIImageView()
+    private let mediaScroll = UIScrollView()
+    private let mediaStack = UIStackView()
     private let reactionStack = UIStackView()
-    private var imageTask: Task<Void, Never>?
+    private var imageTasks: [Task<Void, Never>] = []
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
         selectionStyle = .default
+        backgroundColor = .black
+        contentView.backgroundColor = .black
         configureViews()
     }
 
@@ -845,15 +1077,28 @@ final class MemoTableViewCell: UITableViewCell {
 
     override func prepareForReuse() {
         super.prepareForReuse()
-        imageTask?.cancel()
-        previewImage.image = nil
+        imageTasks.forEach { $0.cancel() }
+        imageTasks.removeAll()
+        avatarView.image = nil
+        mediaStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         reactionStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
     }
 
     private func configureViews() {
-        stack.axis = .vertical
-        stack.spacing = 8
+        stack.axis = .horizontal
+        stack.alignment = .top
+        stack.spacing = 12
         stack.translatesAutoresizingMaskIntoConstraints = false
+        avatarView.contentMode = .scaleAspectFill
+        avatarView.clipsToBounds = true
+        avatarView.layer.cornerRadius = 23
+        avatarView.backgroundColor = UIColor(white: 0.15, alpha: 1)
+        avatarView.translatesAutoresizingMaskIntoConstraints = false
+        avatarView.widthAnchor.constraint(equalToConstant: 46).isActive = true
+        avatarView.heightAnchor.constraint(equalToConstant: 46).isActive = true
+        contentStack.axis = .vertical
+        contentStack.spacing = 8
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
         metaLabel.font = .preferredFont(forTextStyle: .subheadline)
         metaLabel.textColor = .secondaryLabel
         bodyLabel.font = .preferredFont(forTextStyle: .body)
@@ -861,24 +1106,41 @@ final class MemoTableViewCell: UITableViewCell {
         tagsLabel.font = .preferredFont(forTextStyle: .caption1)
         tagsLabel.textColor = .systemBlue
         tagsLabel.numberOfLines = 0
-        previewImage.contentMode = .scaleAspectFill
-        previewImage.clipsToBounds = true
-        previewImage.layer.cornerRadius = 12
-        previewImage.heightAnchor.constraint(equalToConstant: 180).isActive = true
+        mediaScroll.showsHorizontalScrollIndicator = false
+        mediaScroll.translatesAutoresizingMaskIntoConstraints = false
+        mediaStack.axis = .horizontal
+        mediaStack.spacing = 8
+        mediaStack.translatesAutoresizingMaskIntoConstraints = false
+        mediaScroll.addSubview(mediaStack)
+        NSLayoutConstraint.activate([
+            mediaStack.topAnchor.constraint(equalTo: mediaScroll.topAnchor),
+            mediaStack.leadingAnchor.constraint(equalTo: mediaScroll.leadingAnchor),
+            mediaStack.trailingAnchor.constraint(equalTo: mediaScroll.trailingAnchor),
+            mediaStack.bottomAnchor.constraint(equalTo: mediaScroll.bottomAnchor),
+            mediaStack.heightAnchor.constraint(equalToConstant: 210),
+            mediaScroll.heightAnchor.constraint(equalToConstant: 210)
+        ])
         reactionStack.axis = .horizontal
-        reactionStack.spacing = 8
-        [metaLabel, bodyLabel, tagsLabel, previewImage, reactionStack].forEach(stack.addArrangedSubview)
+        reactionStack.distribution = .equalSpacing
+        [avatarView, contentStack].forEach(stack.addArrangedSubview)
+        contentStack.addArrangedSubview(metaLabel)
+        contentStack.addArrangedSubview(bodyLabel)
+        contentStack.addArrangedSubview(tagsLabel)
+        contentStack.addArrangedSubview(mediaScroll)
+        contentStack.addArrangedSubview(reactionStack)
         contentView.addSubview(stack)
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
             stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-            stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -14)
+            stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -14),
+            contentStack.trailingAnchor.constraint(equalTo: stack.trailingAnchor)
         ])
     }
 
-    func configure(memo: NativeMemo, api: NativeMemosAPI?, onReact: ((String) -> Void)?) {
-        metaLabel.text = "\(memo.creator.isEmpty ? "Memos" : memo.creator)  \(formatTime(memo.createTime))"
+    func configure(memo: NativeMemo, user: NativeUser?, api: NativeMemosAPI?, onReact: ((String) -> Void)?) {
+        let visibleName = user?.visibleName ?? (memo.creator.isEmpty ? "Memos" : memo.creator.split(separator: "/").last.map(String.init) ?? "Memos")
+        metaLabel.text = "\(visibleName)  @\(user?.username ?? "memos")  · \(formatTime(memo.createTime))"
         bodyLabel.text = memo.content
         tagsLabel.text = memo.tags.map { "#\($0)" }.joined(separator: "  ")
         tagsLabel.isHidden = memo.tags.isEmpty
@@ -892,15 +1154,31 @@ final class MemoTableViewCell: UITableViewCell {
             }
             reactionStack.addArrangedSubview(button)
         }
-        if let attachment = memo.attachments.first(where: { $0.isImage }), let api {
-            previewImage.isHidden = false
-            imageTask = Task { [weak self] in
-                let image = await api.loadAttachmentImage(attachment)
-                guard !Task.isCancelled else { return }
-                self?.previewImage.image = image
+        mediaScroll.isHidden = memo.attachments.filter { $0.isImage }.isEmpty
+        memo.attachments.filter { $0.isImage }.forEach { attachment in
+            let imageView = UIImageView()
+            imageView.contentMode = .scaleAspectFill
+            imageView.clipsToBounds = true
+            imageView.layer.cornerRadius = 14
+            imageView.backgroundColor = UIColor(white: 0.12, alpha: 1)
+            imageView.translatesAutoresizingMaskIntoConstraints = false
+            imageView.widthAnchor.constraint(equalToConstant: 260).isActive = true
+            imageView.heightAnchor.constraint(equalToConstant: 210).isActive = true
+            mediaStack.addArrangedSubview(imageView)
+            if let api {
+                imageTasks.append(Task { [weak imageView] in
+                    let image = await api.loadAttachmentImage(attachment)
+                    guard !Task.isCancelled else { return }
+                    imageView?.image = image
+                })
             }
-        } else {
-            previewImage.isHidden = true
+        }
+        if let user, let api {
+            imageTasks.append(Task { [weak self] in
+                let image = await api.loadUserAvatar(user)
+                guard !Task.isCancelled else { return }
+                self?.avatarView.image = image
+            })
         }
     }
 }
@@ -944,6 +1222,17 @@ private func shortHost(_ value: String) -> String {
 private func formatTime(_ value: String?) -> String {
     guard let value else { return "" }
     return value.replacingOccurrences(of: "T", with: " ").components(separatedBy: ".").first?.replacingOccurrences(of: "Z", with: "") ?? value
+}
+
+private extension UIView {
+    var parentViewController: UIViewController? {
+        var responder: UIResponder? = self
+        while let current = responder {
+            if let viewController = current as? UIViewController { return viewController }
+            responder = current.next
+        }
+        return nil
+    }
 }
 
 private func encodePathSegment(_ value: String) -> String {

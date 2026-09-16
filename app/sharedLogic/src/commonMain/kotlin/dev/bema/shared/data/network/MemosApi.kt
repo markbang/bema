@@ -1,6 +1,9 @@
 package dev.bema.shared.data.network
 
 import dev.bema.shared.data.model.Attachment
+import dev.bema.shared.data.model.BatchGetUsersRequest
+import dev.bema.shared.data.model.BatchGetUsersResponse
+import dev.bema.shared.data.model.InstanceSetting
 import dev.bema.shared.data.model.CreateMemoShareRequestBody
 import dev.bema.shared.data.model.CurrentUserResponse
 import dev.bema.shared.data.model.InstanceProfile
@@ -158,6 +161,36 @@ class MemosApi(
     suspend fun instanceProfile(): InstanceProfile =
         httpClient.get { url { api("instance", "profile") } }.requireSuccess().body()
 
+    suspend fun generalSetting(): InstanceSetting =
+        request { token ->
+            httpClient.get {
+                url { api("instance", "settings", "GENERAL") }
+                auth(token)
+            }
+        }.body()
+
+    suspend fun batchGetUsers(usernames: List<String>): List<dev.bema.shared.data.model.User> {
+        if (usernames.isEmpty()) return emptyList()
+        return request { token ->
+            httpClient.post {
+                url { api("users:batchGet") }
+                auth(token)
+                jsonBody(BatchGetUsersRequest(usernames.distinct().take(100)))
+            }
+        }.body<BatchGetUsersResponse>().users
+    }
+
+    fun userAvatarUrl(username: String): String =
+        URLBuilder().apply { file("users", username, "avatar") }.buildString()
+
+    fun assetUrl(value: String): String {
+        if (value.isBlank() || value.startsWith("data:") || value.startsWith("http://") || value.startsWith("https://")) return value
+        return URLBuilder().apply {
+            takeFrom(baseUrl)
+            appendPathSegments(*value.trimStart('/').split('/').filter { it.isNotBlank() }.toTypedArray())
+        }.buildString()
+    }
+
     suspend fun listMemos(
         pageSize: Int = 30,
         pageToken: String = "",
@@ -180,16 +213,26 @@ class MemosApi(
     suspend fun getMemo(name: String): Memo =
         request { token -> httpClient.get { url { api(name) }; auth(token) } }.body()
 
+    suspend fun createAttachment(filename: String, content: ByteArray, type: String): Attachment =
+        request { token ->
+            httpClient.post {
+                url { api("attachments") }
+                auth(token)
+                jsonBody(dev.bema.shared.data.model.AttachmentUpload(filename, content, type))
+            }
+        }.body()
+
     suspend fun createMemo(
         content: String,
         visibility: Visibility,
-        pinned: Boolean = false
+        pinned: Boolean = false,
+        attachments: List<Attachment> = emptyList()
     ): Memo =
         request { token ->
             httpClient.post {
                 url { api("memos") }
                 auth(token)
-                jsonBody(MemoInput(content = content, visibility = visibility, pinned = pinned))
+                jsonBody(MemoInput(content = content, visibility = visibility, pinned = pinned, attachments = attachments.map { Attachment(name = it.name) }))
             }
         }.body()
 
@@ -323,6 +366,11 @@ class MemosApi(
                 jsonBody(notification.copy(status = "ARCHIVED"))
             }
         }.body()
+
+    suspend fun getUrlBytes(url: String): ByteArray =
+        request { token ->
+            httpClient.get(url) { auth(token) }
+        }.bodyAsBytes()
 
     suspend fun getAttachmentBytes(attachment: Attachment, thumbnail: Boolean = false): ByteArray {
         if (attachment.externalLink.isNotBlank()) {
