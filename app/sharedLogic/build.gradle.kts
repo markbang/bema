@@ -56,7 +56,6 @@ kotlin {
             implementation(libs.ktor.client.content.negotiation)
             implementation(libs.ktor.serialization.kotlinx.json)
             implementation(libs.kotlinx.serialization.json)
-            api(libs.kotlinx.datetime)
             api(libs.kotlinx.coroutines.core)
         }
         androidMain.dependencies {

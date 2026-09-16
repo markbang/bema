@@ -23,19 +23,39 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.TextButton
 import top.yukonga.miuix.kmp.basic.Button as MiuixButton
+import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.FloatingActionButton as MiuixFloatingActionButton
 import top.yukonga.miuix.kmp.basic.HorizontalDivider as MiuixHorizontalDivider
+import top.yukonga.miuix.kmp.basic.Icon as MiuixIcon
 import top.yukonga.miuix.kmp.basic.IconButton as MiuixIconButton
+import top.yukonga.miuix.kmp.basic.NavigationBar as MiuixNavigationBar
+import top.yukonga.miuix.kmp.basic.NavigationBarDisplayMode
+import top.yukonga.miuix.kmp.basic.NavigationBarItem as MiuixNavigationBarItem
 import top.yukonga.miuix.kmp.basic.Scaffold as MiuixScaffold
 import top.yukonga.miuix.kmp.basic.Surface as MiuixSurface
-import top.yukonga.miuix.kmp.basic.TextField as MiuixTextField
 import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.basic.TextButton as MiuixTextButton
+import top.yukonga.miuix.kmp.basic.TextField as MiuixTextField
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.Add
+import top.yukonga.miuix.kmp.icon.extended.Back
+import top.yukonga.miuix.kmp.icon.extended.ExpandMore
+import top.yukonga.miuix.kmp.icon.extended.Favorites
+import top.yukonga.miuix.kmp.icon.extended.Home
+import top.yukonga.miuix.kmp.icon.extended.Link
+import top.yukonga.miuix.kmp.icon.extended.Messages
+import top.yukonga.miuix.kmp.icon.extended.More
+import top.yukonga.miuix.kmp.icon.extended.Notes
+import top.yukonga.miuix.kmp.icon.extended.Ok
+import top.yukonga.miuix.kmp.icon.extended.Photos
+import top.yukonga.miuix.kmp.icon.extended.Refresh
+import top.yukonga.miuix.kmp.icon.extended.Reply
+import top.yukonga.miuix.kmp.icon.extended.Search
+import top.yukonga.miuix.kmp.icon.extended.Share
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.darkColorScheme
+import top.yukonga.miuix.kmp.window.WindowDialog
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -50,6 +70,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -87,12 +108,10 @@ fun BemaMemosApp(controller: MemosTimelineController = remember { MemosTimelineC
         onSurfaceVariantSummary = TextSecondary,
         onSurfaceVariantActions = TextSecondary
     )
-    MaterialTheme {
-        MiuixTheme(colors = darkColors) {
-            MiuixSurface(color = Ink, modifier = Modifier.fillMaxSize()) {
-                if (state.activeAccount == null) SignInScreen(state, controller)
-                else TimelineShell(state, controller)
-            }
+    MiuixTheme(colors = darkColors) {
+        MiuixSurface(color = Ink, modifier = Modifier.fillMaxSize()) {
+            if (state.activeAccount == null) SignInScreen(state, controller)
+            else TimelineShell(state, controller)
         }
     }
 }
@@ -129,8 +148,8 @@ private fun SignInScreen(state: MemosAppState, controller: MemosTimelineControll
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     Column(Modifier.fillMaxSize().background(Ink).padding(28.dp), verticalArrangement = Arrangement.Center) {
-        Text("bema", color = TextPrimary, style = MaterialTheme.typography.displayMedium, fontWeight = FontWeight.Black)
-        Text("Your Memos, in one timeline.", color = TextSecondary, style = MaterialTheme.typography.titleMedium)
+        Text("bema", color = TextPrimary, style = MiuixTheme.textStyles.title1, fontWeight = FontWeight.Black)
+        Text("Your Memos, in one timeline.", color = TextSecondary, style = MiuixTheme.textStyles.headline1)
         Spacer(Modifier.height(36.dp))
         DarkField(instance, { instance = it }, "Memos instance", "memos.example.com")
         Spacer(Modifier.height(12.dp))
@@ -174,7 +193,7 @@ private fun TimelineShell(state: MemosAppState, controller: MemosTimelineControl
         bottomBar = { BottomNav(onAdd = { showComposer = true }) },
         floatingActionButton = {
             MiuixFloatingActionButton(onClick = { showComposer = true }, containerColor = Accent, shape = CircleShape) {
-                Text("+", style = MaterialTheme.typography.headlineMedium)
+                MiuixIcon(MiuixIcons.Add, contentDescription = "New memo", tint = Color.White)
             }
         }
     ) { padding ->
@@ -187,6 +206,7 @@ private fun TimelineShell(state: MemosAppState, controller: MemosTimelineControl
 
 @Composable
 private fun TimelineHeader(state: MemosAppState, controller: MemosTimelineController, onAccounts: () -> Unit) {
+    val scope = rememberCoroutineScope()
     Row(
         Modifier.fillMaxWidth().background(Ink).padding(horizontal = 18.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -197,26 +217,30 @@ private fun TimelineHeader(state: MemosAppState, controller: MemosTimelineContro
         Avatar(controller.siteLogoUrl().ifBlank { null }, account?.siteTitle ?: "M", Modifier.size(24.dp), controller)
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            Text("For you", color = TextPrimary, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
-            Text(account?.siteTitle ?: "Memos", color = TextSecondary, style = MaterialTheme.typography.labelMedium)
+            Text("For you", color = TextPrimary, fontWeight = FontWeight.Bold, style = MiuixTheme.textStyles.title3)
+            Text(account?.siteTitle ?: "Memos", color = TextSecondary, style = MiuixTheme.textStyles.footnote1)
         }
-        MiuixIconButton(onClick = onAccounts) { Text("⌄", color = TextPrimary, fontSize = MaterialTheme.typography.headlineSmall.fontSize) }
-        MiuixIconButton(onClick = { }) { Text("✦", color = TextPrimary, fontSize = MaterialTheme.typography.titleLarge.fontSize) }
+        MiuixIconButton(onClick = onAccounts) {
+            MiuixIcon(MiuixIcons.ExpandMore, contentDescription = "Switch account", tint = TextPrimary)
+        }
+        MiuixIconButton(onClick = { scope.launch { controller.refreshTimeline() } }) {
+            MiuixIcon(MiuixIcons.Refresh, contentDescription = "Refresh", tint = TextPrimary)
+        }
     }
 }
 
 @Composable
 private fun BottomNav(onAdd: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().background(Ink.copy(alpha = .98f)).padding(horizontal = 22.dp, vertical = 12.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+    MiuixNavigationBar(
+        color = Ink.copy(alpha = .98f),
+        showDivider = true,
+        mode = NavigationBarDisplayMode.IconOnly
     ) {
-        Text("⌂", color = TextPrimary, style = MaterialTheme.typography.headlineMedium)
-        Text("⌕", color = TextSecondary, style = MaterialTheme.typography.headlineMedium)
-        Text("◌", color = TextSecondary, style = MaterialTheme.typography.headlineMedium)
-        Text("♧", color = TextSecondary, style = MaterialTheme.typography.headlineMedium)
-        Text("♡", color = TextSecondary, style = MaterialTheme.typography.headlineMedium)
+        MiuixNavigationBarItem(selected = true, onClick = {}, icon = MiuixIcons.Home, label = "Home")
+        MiuixNavigationBarItem(selected = false, onClick = {}, icon = MiuixIcons.Search, label = "Search")
+        MiuixNavigationBarItem(selected = false, onClick = onAdd, icon = MiuixIcons.Notes, label = "Compose")
+        MiuixNavigationBarItem(selected = false, onClick = {}, icon = MiuixIcons.Messages, label = "Notifications")
+        MiuixNavigationBarItem(selected = false, onClick = {}, icon = MiuixIcons.Favorites, label = "Favorites")
     }
 }
 
@@ -261,7 +285,7 @@ private fun MemoTweet(memo: Memo, user: User?, controller: MemosTimelineControll
                     Text("· ${formatTime(memo.createTime?.toString())}", color = TextSecondary, maxLines = 1)
                 }
                 Spacer(Modifier.height(5.dp))
-                Text(memo.content, color = TextPrimary, style = MaterialTheme.typography.bodyLarge)
+                Text(memo.content, color = TextPrimary, style = MiuixTheme.textStyles.paragraph)
                 if (memo.tags.isNotEmpty()) Text(memo.tags.joinToString("  ") { "#$it" }, color = Accent, modifier = Modifier.padding(top = 8.dp))
                 if (memo.attachments.isNotEmpty()) MediaRail(memo, controller)
                 TweetActions(memo, onReact)
@@ -289,19 +313,19 @@ private fun MediaRail(memo: Memo, controller: MemosTimelineController) {
 @Composable
 private fun TweetActions(memo: Memo, onReact: (String) -> Unit) {
     Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-        Action("○", memo.relations.count { it.type.name == "COMMENT" }.toString())
-        Action("↗", "")
-        Action("♡", memo.reactions.size.toString(), onClick = { onReact("❤️") })
-        Action("⌁", "")
-        Action("⋯", "")
+        Action(MiuixIcons.Reply, "Reply", memo.relations.count { it.type.name == "COMMENT" }.toString())
+        Action(MiuixIcons.Link, "Copy link", "")
+        Action(MiuixIcons.Favorites, "React", memo.reactions.size.toString(), onClick = { onReact("❤️") })
+        Action(MiuixIcons.Share, "Share", "")
+        Action(MiuixIcons.More, "More", "")
     }
 }
 
 @Composable
-private fun Action(icon: String, count: String, onClick: (() -> Unit)? = null) {
+private fun Action(icon: ImageVector, description: String, count: String, onClick: (() -> Unit)? = null) {
     Row(Modifier.clickable(enabled = onClick != null) { onClick?.invoke() }, verticalAlignment = Alignment.CenterVertically) {
-        Text(icon, color = TextSecondary, style = MaterialTheme.typography.titleMedium)
-        if (count.isNotBlank()) Text("  $count", color = TextSecondary, style = MaterialTheme.typography.labelMedium)
+        MiuixIcon(icon, contentDescription = description, tint = TextSecondary, modifier = Modifier.size(20.dp))
+        if (count.isNotBlank()) Text("  $count", color = TextSecondary, style = MiuixTheme.textStyles.footnote2)
     }
 }
 
@@ -319,42 +343,71 @@ private fun ComposerDialog(state: MemosAppState, controller: MemosTimelineContro
             }.getOrNull()
         }
     }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = InkElevated,
-        title = { Text("New memo", color = TextPrimary) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                DarkField(text, { text = it }, "Say something", secure = false)
-                if (attachments.isNotEmpty()) {
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(attachments) { attachment ->
-                            AsyncImage(attachment.content, attachment.filename, contentScale = ContentScale.Crop, modifier = Modifier.size(78.dp).clip(RoundedCornerShape(10.dp)))
-                        }
+    WindowDialog(
+        show = true,
+        title = "New memo",
+        backgroundColor = InkElevated,
+        onDismissRequest = onDismiss
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            DarkField(text, { text = it }, "Say something", secure = false)
+            if (attachments.isNotEmpty()) {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(attachments) { attachment ->
+                        AsyncImage(
+                            attachment.content,
+                            attachment.filename,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.size(78.dp).clip(RoundedCornerShape(10.dp))
+                        )
                     }
                 }
-                TextButton(onClick = { picker.launch("image/*") }) { Text("Add photos", color = Accent) }
             }
-        },
-        confirmButton = { TextButton(enabled = (text.isNotBlank() || attachments.isNotEmpty()) && !state.isPublishing, onClick = { scope.launch { controller.publish(text, pendingAttachments = attachments); onDismiss() } }) { Text("Post", color = Accent) } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = TextSecondary) } }
-    )
+            Row(
+                modifier = Modifier.clickable { picker.launch("image/*") }.padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                MiuixIcon(MiuixIcons.Photos, contentDescription = "Add photos", tint = Accent)
+                Spacer(Modifier.width(8.dp))
+                Text("Add photos", color = Accent)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                MiuixTextButton(text = "Cancel", onClick = onDismiss, modifier = Modifier.weight(1f))
+                MiuixTextButton(
+                    text = if (state.isPublishing) "Posting" else "Post",
+                    enabled = (text.isNotBlank() || attachments.isNotEmpty()) && !state.isPublishing,
+                    onClick = {
+                        scope.launch {
+                            controller.publish(text, pendingAttachments = attachments)
+                            onDismiss()
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.textButtonColorsPrimary()
+                )
+            }
+        }
+    }
 }
 
 @Composable
 private fun AccountSheet(state: MemosAppState, controller: MemosTimelineController, onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = InkElevated,
-        title = { Text("Accounts", color = TextPrimary) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                state.accounts.forEach { account -> AccountRow(account, account.id == state.activeAccountId, controller) }
-                Text("Add another account", color = Accent, modifier = Modifier.clickable { onDismiss() })
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Done", color = TextSecondary) } }
-    )
+    WindowDialog(
+        show = true,
+        title = "Accounts",
+        backgroundColor = InkElevated,
+        onDismissRequest = onDismiss
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            state.accounts.forEach { account -> AccountRow(account, account.id == state.activeAccountId, controller) }
+            MiuixTextButton(
+                text = "Done",
+                onClick = onDismiss,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.textButtonColorsPrimary()
+            )
+        }
+    }
 }
 
 @Composable
@@ -367,7 +420,7 @@ private fun AccountRow(account: MemosAccount, selected: Boolean, controller: Mem
             Text(account.siteTitle, color = TextPrimary, fontWeight = FontWeight.SemiBold)
             Text(account.visibleName, color = TextSecondary)
         }
-        if (selected) Text("✓", color = Accent)
+        if (selected) MiuixIcon(MiuixIcons.Ok, contentDescription = "Selected", tint = Accent)
     }
 }
 
@@ -378,14 +431,32 @@ private fun MemoDetailScreen(state: MemosAppState, controller: MemosTimelineCont
     val memo = state.selectedMemo ?: return
     PredictiveBackHandler { controller.closeMemo() }
     LazyColumn(modifier.fillMaxSize().background(Ink), contentPadding = PaddingValues(bottom = 28.dp)) {
-        item { Text("‹  Back", color = Accent, modifier = Modifier.clickable { controller.closeMemo() }.padding(18.dp)) }
+        item {
+            Row(
+                modifier = Modifier.clickable { controller.closeMemo() }.padding(18.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                MiuixIcon(MiuixIcons.Back, contentDescription = "Back", tint = Accent)
+                Spacer(Modifier.width(8.dp))
+                Text("Back", color = Accent)
+            }
+        }
         item { MemoTweet(memo, state.userProfiles[memo.creator.substringAfterLast('/')], controller) { scope.launch { controller.react(memo, it) } } }
         item {
             Column(Modifier.padding(16.dp)) {
                 Text("Replies", color = TextPrimary, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(10.dp))
                 DarkField(comment, { comment = it }, "Write a reply")
-                TextButton(enabled = comment.isNotBlank(), onClick = { val body = comment; comment = ""; scope.launch { controller.comment(body) } }) { Text("Reply", color = Accent) }
+                MiuixTextButton(
+                    text = "Reply",
+                    enabled = comment.isNotBlank(),
+                    onClick = {
+                        val body = comment
+                        comment = ""
+                        scope.launch { controller.comment(body) }
+                    },
+                    colors = ButtonDefaults.textButtonColorsPrimary()
+                )
             }
         }
         items(state.selectedComments, key = { it.name }) { reply ->
