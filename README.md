@@ -46,7 +46,7 @@ screens cannot drift into a separately maintained implementation.
 
 [`ci.yml`](./.github/workflows/ci.yml) validates the Gradle wrapper, runs `androidCheck`,
 and builds the iOS app; [`ui-preview.yml`](./.github/workflows/ui-preview.yml) captures the Android
-UI catalog; [`codeql.yml`](./.github/workflows/codeql.yml) runs CodeQL quality/security analysis.
+UI catalog. Dependabot tracks Gradle and GitHub Actions updates.
 
 [release-please](https://github.com/googleapis/release-please) turns
 [Conventional Commits](https://www.conventionalcommits.org/) into a release PR.
