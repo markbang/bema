@@ -89,7 +89,14 @@ jobs:
             adb shell wm density 420
             ./gradlew :app:androidApp:connectedDebugAndroidTest -PskipIosTargets
             mkdir -p build/ui-preview
-            adb pull /sdcard/Android/data/dev.bema.android/files/ui-preview/. build/ui-preview/
+            screenshot_dir=$(adb shell 'find /sdcard/Android/data -type d -path "*/files/ui-preview" 2>/dev/null | head -n 1' | tr -d '\r')
+            if [ -z "$screenshot_dir" ]; then
+              echo "::error::The screenshot test completed but no ui-preview directory was found."
+              adb shell 'find /sdcard/Android/data -maxdepth 5 -type d 2>/dev/null' || true
+              exit 1
+            fi
+            echo "Pulling screenshots from $screenshot_dir"
+            adb pull "$screenshot_dir/." build/ui-preview/
 
       - name: Assemble preview artifact
         run: |
