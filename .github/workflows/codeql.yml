@@ -44,7 +44,7 @@ jobs:
       # Advanced setup: CodeQL extracts Kotlin/Java while the project is built.
       # Manual build mode is used because the default autobuild picks up the
       # iOS targets, which cannot link on Linux.
-      - uses: github/codeql-action/init@v3
+      - uses: github/codeql-action/init@v4
         with:
           languages: java-kotlin
           build-mode: manual
@@ -53,6 +53,6 @@ jobs:
       - name: Build for CodeQL
         run: ./gradlew :app:androidApp:assembleDebug -PskipIosTargets
 
-      - uses: github/codeql-action/analyze@v3
+      - uses: github/codeql-action/analyze@v4
         with:
           category: "/language:java-kotlin"
