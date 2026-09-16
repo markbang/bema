@@ -32,27 +32,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-java@v6
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - uses: gradle/actions/setup-gradle@v6
-        with:
-          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
-
-      # Advanced setup: CodeQL extracts Kotlin/Java while the project is built.
-      # Manual build mode is used because the default autobuild picks up the
-      # iOS targets, which cannot link on Linux.
-      - uses: github/codeql-action/init@v3
+      # Kotlin 2.4 is newer than the build-instrumentation support in the
+      # current CodeQL extractor. Build mode "none" analyzes source directly;
+      # the regular CI workflow remains the authority for actual compilation.
+      - uses: github/codeql-action/init@v4
         with:
           languages: java-kotlin
-          build-mode: manual
+          build-mode: none
           queries: security-and-quality
 
-      - name: Build for CodeQL
-        run: ./gradlew :app:androidApp:assembleDebug -PskipIosTargets
-
-      - uses: github/codeql-action/analyze@v3
+      - uses: github/codeql-action/analyze@v4
         with:
           category: "/language:java-kotlin"
