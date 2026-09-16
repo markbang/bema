@@ -983,6 +983,8 @@ final class ComposerView: UIView, PHPickerViewControllerDelegate {
     private let visibility = UISegmentedControl(items: ["Private", "Protected", "Public"])
     private let postButton = UIButton(type: .system)
     private let photoButton = UIButton(type: .system)
+    private let previewScroll = UIScrollView()
+    private let previewStack = UIStackView()
     private var selectedAttachments: [PendingNativeAttachment] = []
 
     override init(frame: CGRect) {
@@ -1006,7 +1008,21 @@ final class ComposerView: UIView, PHPickerViewControllerDelegate {
         let controls = UIStackView(arrangedSubviews: [photoButton, visibility, postButton])
         controls.axis = .horizontal
         controls.spacing = 12
-        let stack = UIStackView(arrangedSubviews: [textView, controls])
+        previewScroll.showsHorizontalScrollIndicator = false
+        previewStack.axis = .horizontal
+        previewStack.spacing = 8
+        previewStack.translatesAutoresizingMaskIntoConstraints = false
+        previewScroll.addSubview(previewStack)
+        NSLayoutConstraint.activate([
+            previewStack.leadingAnchor.constraint(equalTo: previewScroll.leadingAnchor),
+            previewStack.trailingAnchor.constraint(equalTo: previewScroll.trailingAnchor),
+            previewStack.topAnchor.constraint(equalTo: previewScroll.topAnchor),
+            previewStack.bottomAnchor.constraint(equalTo: previewScroll.bottomAnchor),
+            previewStack.heightAnchor.constraint(equalToConstant: 72),
+            previewScroll.heightAnchor.constraint(equalToConstant: 72)
+        ])
+        previewScroll.isHidden = true
+        let stack = UIStackView(arrangedSubviews: [textView, previewScroll, controls])
         stack.axis = .vertical
         stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -1027,6 +1043,8 @@ final class ComposerView: UIView, PHPickerViewControllerDelegate {
         let attachments = selectedAttachments
         textView.text = ""
         selectedAttachments.removeAll()
+        previewStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        previewScroll.isHidden = true
         onPost?(text, value, attachments)
     }
 
@@ -1046,7 +1064,19 @@ final class ComposerView: UIView, PHPickerViewControllerDelegate {
         for result in results {
             result.itemProvider.loadObject(ofClass: UIImage.self) { [weak self] object, _ in
                 guard let image = object as? UIImage, let data = image.jpegData(compressionQuality: 0.88) else { return }
-                DispatchQueue.main.async { self?.selectedAttachments.append(PendingNativeAttachment(filename: "photo-\(self?.selectedAttachments.count ?? 0).jpg", data: data, type: "image/jpeg")) }
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.selectedAttachments.append(PendingNativeAttachment(filename: "photo-\(self.selectedAttachments.count).jpg", data: data, type: "image/jpeg"))
+                    let imageView = UIImageView(image: image)
+                    imageView.contentMode = .scaleAspectFill
+                    imageView.clipsToBounds = true
+                    imageView.layer.cornerRadius = 10
+                    imageView.translatesAutoresizingMaskIntoConstraints = false
+                    imageView.widthAnchor.constraint(equalToConstant: 72).isActive = true
+                    imageView.heightAnchor.constraint(equalToConstant: 72).isActive = true
+                    self.previewStack.addArrangedSubview(imageView)
+                    self.previewScroll.isHidden = false
+                }
             }
         }
     }
