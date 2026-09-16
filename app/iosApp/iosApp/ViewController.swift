@@ -113,17 +113,17 @@ struct PendingNativeAttachment {
     var type: String
 }
 
-private struct NativeCustomProfile: Codable {
+struct NativeCustomProfile: Codable {
     var title: String?
     var description: String?
     var logoUrl: String?
 }
 
-private struct NativeGeneralSetting: Codable {
+struct NativeGeneralSetting: Codable {
     var customProfile: NativeCustomProfile?
 }
 
-private struct NativeInstanceSetting: Codable {
+struct NativeInstanceSetting: Codable {
     var name: String
     var generalSetting: NativeGeneralSetting?
 }
