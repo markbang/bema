@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -488,7 +489,14 @@ private fun SearchScreen(
             label = "Search memos",
             useLabelAsPlaceholder = true,
             singleLine = true,
-            leadingIcon = { MiuixIcon(MiuixIcons.Search, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(20.dp)) },
+            leadingIcon = {
+                MiuixIcon(
+                    MiuixIcons.Search,
+                    contentDescription = null,
+                    tint = TextSecondary,
+                    modifier = Modifier.padding(start = 14.dp, end = 8.dp).size(20.dp)
+                )
+            },
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)
         )
         when {
@@ -1166,6 +1174,8 @@ private fun AccountSheet(state: MemosAppState, controller: MemosUiController, on
             }
         } else null
     ) {
+        // miuix only ime-pads the sheet; lift content above the system gesture bar.
+        Column(Modifier.navigationBarsPadding().padding(bottom = 8.dp)) {
         when (val current = mode) {
             AccountSheetMode.List -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 state.orderedAccounts.forEach { account ->
@@ -1222,6 +1232,7 @@ private fun AccountSheet(state: MemosAppState, controller: MemosUiController, on
                     }
                 )
             }
+        }
         }
     }
     renaming?.let { account ->
