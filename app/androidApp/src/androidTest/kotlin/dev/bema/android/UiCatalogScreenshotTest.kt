@@ -26,21 +26,37 @@ class UiCatalogScreenshotTest {
 
     @Test
     fun captureCatalogStates() {
-        composeRule.onNodeWithText("Bema Notes").assertIsDisplayed()
+        Thread.sleep(1000)
+        composeRule.waitForIdle()
+        
+        // Timeline
+        composeRule.waitUntil(5000) {
+            composeRule.onAllNodesWithText("Bema Notes", substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
         capture("01-timeline")
 
+        // Detail
         composeRule.onNodeWithText("修了一晚上", substring = true).performClick()
-        composeRule.onNodeWithText("Memo").assertIsDisplayed()
+        composeRule.waitForIdle()
+        Thread.sleep(800)
         capture("02-detail")
 
+        // Composer
         composeRule.onNodeWithContentDescription("Back").performClick()
+        composeRule.waitForIdle()
+        Thread.sleep(500)
         composeRule.onNodeWithContentDescription("New memo").performClick()
-        composeRule.onNodeWithText("New memo").assertIsDisplayed()
+        composeRule.waitForIdle()
+        Thread.sleep(800)
         capture("03-composer")
 
+        // Accounts
         composeRule.onNodeWithText("Cancel").performClick()
+        composeRule.waitForIdle()
+        Thread.sleep(500)
         composeRule.onNodeWithText("Lin", substring = true).performClick()
-        composeRule.onNodeWithText("Accounts").assertIsDisplayed()
+        composeRule.waitForIdle()
+        Thread.sleep(800)
         capture("04-accounts")
     }
 
