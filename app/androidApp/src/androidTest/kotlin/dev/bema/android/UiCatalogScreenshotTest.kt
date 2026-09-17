@@ -4,7 +4,6 @@ import android.content.ContentValues
 import android.graphics.Bitmap
 import android.os.Environment
 import android.provider.MediaStore
-import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -26,37 +25,29 @@ class UiCatalogScreenshotTest {
 
     @Test
     fun captureCatalogStates() {
-        Thread.sleep(1000)
+        Thread.sleep(1500)
         composeRule.waitForIdle()
-        
-        // Timeline
-        composeRule.waitUntil(5000) {
-            composeRule.onAllNodesWithText("Bema Notes", substring = true).fetchSemanticsNodes().isNotEmpty()
-        }
         capture("01-timeline")
 
-        // Detail
         composeRule.onNodeWithText("修了一晚上", substring = true).performClick()
         composeRule.waitForIdle()
-        Thread.sleep(800)
+        Thread.sleep(1000)
         capture("02-detail")
 
-        // Composer
         composeRule.onNodeWithContentDescription("Back").performClick()
         composeRule.waitForIdle()
-        Thread.sleep(500)
+        Thread.sleep(600)
         composeRule.onNodeWithContentDescription("New memo").performClick()
         composeRule.waitForIdle()
-        Thread.sleep(800)
+        Thread.sleep(1000)
         capture("03-composer")
 
-        // Accounts
         composeRule.onNodeWithText("Cancel").performClick()
         composeRule.waitForIdle()
-        Thread.sleep(500)
+        Thread.sleep(600)
         composeRule.onNodeWithText("Lin", substring = true).performClick()
         composeRule.waitForIdle()
-        Thread.sleep(800)
+        Thread.sleep(1000)
         capture("04-accounts")
     }
 
