@@ -3,6 +3,7 @@ package dev.bema.shared.data.model
 import kotlin.time.Instant
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
 
 @Serializable
 enum class MemoState {
@@ -252,19 +253,66 @@ data class BatchGetUsersResponse(
 @Serializable
 data class InstanceSetting(
     val name: String = "",
-    val generalSetting: GeneralSetting? = null
+    val generalSetting: GeneralSetting? = null,
+    val storageSetting: StorageSetting? = null,
+    val memoRelatedSetting: MemoRelatedSetting? = null,
+    val workspaceSetting: WorkspaceSetting? = null,
+    @SerialName("dataSetting") val dataSetting: JsonElement? = null
 )
 
 @Serializable
 data class GeneralSetting(
-    val customProfile: CustomProfile? = null
+    val customProfile: CustomProfile? = null,
+    @SerialName("disallow_user_registration")
+    val disallowUserRegistration: Boolean = false,
+    @SerialName("disallow_password_login")
+    val disallowPasswordLogin: Boolean = false
 )
 
 @Serializable
 data class CustomProfile(
     val title: String = "",
     val description: String = "",
-    val logoUrl: String = ""
+    val logoUrl: String = "",
+    val locale: String = "",
+    val appearance: String = ""
+)
+
+@Serializable
+data class StorageSetting(
+    val storageType: String = "",      // DATABASE / LOCAL / S3
+    val driver: String = "",
+    @SerialName("uploadsizeLimitMb")
+    val uploadSizeLimitMb: Long = 0
+)
+
+@Serializable
+data class MemoRelatedSetting(
+    @SerialName("enable_link_metadata")
+    val enableLinkMetadata: Boolean = true,
+    @SerialName("display_with_update_time")
+    val displayWithUpdateTime: Boolean = false,
+    @SerialName("reactions")
+    val reactions: JsonElement? = null
+)
+
+@Serializable
+data class WorkspaceSetting(
+    @SerialName("announcement")
+    val announcement: String = "",
+    @SerialName("max_upload_size_mib")
+    val maxUploadSizeMiB: Long = 0,
+    @SerialName("atom_feed_badge_url")
+    val atomFeedBadgeUrl: String = "",
+    @SerialName("disallow_change_username")
+    val disallowChangeUsername: Boolean = false,
+    @SerialName("disallow_change_nickname")
+    val disallowChangeNickname: Boolean = false
+)
+
+@Serializable
+data class UpdateInstanceSettingRequest(
+    val setting: InstanceSetting
 )
 
 @Serializable

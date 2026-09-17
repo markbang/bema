@@ -73,6 +73,20 @@ class MemosContractTest {
         assertTrue(restored.get(Url("https://memos.example.com/files/photo")).isEmpty())
         assertTrue(restored.get(Url("http://memos.example.com/api/v1/memos")).isEmpty())
     }
+
+    @Test
+    fun cachedTimelineJsonRoundTripsWithMemoShape() {
+        // CachedTimeline is private; verify the serialization shape it relies on:
+        // a timeline snapshot is just Memos + a page token + a timestamp.
+        val snapshot = """{
+            "memos":[{"name":"memos/abc","creator":"users/a","content":"hi"}],
+            "nextPageToken":"tok-2",
+            "savedAt":"2026-09-17T08:00:00Z"
+        }""".trimIndent()
+        val decoded = json.decodeFromString<dev.bema.shared.data.model.ListMemosResponse>(snapshot)
+        assertEquals("abc", decoded.memos.single().uid)
+        assertEquals("tok-2", decoded.nextPageToken)
+    }
 }
 
 private class MemoryStore : KeyValueStore {

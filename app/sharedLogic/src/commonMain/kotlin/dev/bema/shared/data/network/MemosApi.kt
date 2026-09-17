@@ -24,6 +24,7 @@ import dev.bema.shared.data.model.RefreshTokenResponse
 import dev.bema.shared.data.model.SignInRequest
 import dev.bema.shared.data.model.SignInResponse
 import dev.bema.shared.data.model.UpsertReactionBody
+import dev.bema.shared.data.model.UpdateInstanceSettingRequest
 import dev.bema.shared.data.model.User
 import dev.bema.shared.data.model.UserNotification
 import dev.bema.shared.data.model.Visibility
@@ -166,6 +167,26 @@ class MemosApi(
             httpClient.get {
                 url { api("instance", "settings", "GENERAL") }
                 auth(token)
+            }
+        }.body()
+
+    suspend fun instanceSetting(setting: String): InstanceSetting =
+        request { token ->
+            httpClient.get {
+                url { api("instance", "settings", setting) }
+                auth(token)
+            }
+        }.body()
+
+    suspend fun updateInstanceSetting(setting: InstanceSetting): InstanceSetting =
+        request { token ->
+            httpClient.patch {
+                url {
+                    api(setting.name)
+                    parameters.append("updateMask", "setting")
+                }
+                auth(token)
+                jsonBody(UpdateInstanceSettingRequest(setting))
             }
         }.body()
 

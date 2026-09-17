@@ -3,6 +3,8 @@ package dev.bema.android
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -15,11 +17,17 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -31,30 +39,30 @@ import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.FloatingActionButton as MiuixFloatingActionButton
 import top.yukonga.miuix.kmp.basic.HorizontalDivider as MiuixHorizontalDivider
 import top.yukonga.miuix.kmp.basic.Icon as MiuixIcon
+import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
 import top.yukonga.miuix.kmp.basic.IconButton as MiuixIconButton
 import top.yukonga.miuix.kmp.basic.NavigationBar as MiuixNavigationBar
 import top.yukonga.miuix.kmp.basic.NavigationBarDisplayMode
 import top.yukonga.miuix.kmp.basic.NavigationBarItem as MiuixNavigationBarItem
 import top.yukonga.miuix.kmp.basic.Scaffold as MiuixScaffold
 import top.yukonga.miuix.kmp.basic.Surface as MiuixSurface
+import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton as MiuixTextButton
 import top.yukonga.miuix.kmp.basic.TextField as MiuixTextField
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Add
 import top.yukonga.miuix.kmp.icon.extended.Back
-import top.yukonga.miuix.kmp.icon.extended.ExpandMore
 import top.yukonga.miuix.kmp.icon.extended.Favorites
 import top.yukonga.miuix.kmp.icon.extended.Home
 import top.yukonga.miuix.kmp.icon.extended.Link
-import top.yukonga.miuix.kmp.icon.extended.Messages
 import top.yukonga.miuix.kmp.icon.extended.More
-import top.yukonga.miuix.kmp.icon.extended.Notes
 import top.yukonga.miuix.kmp.icon.extended.Ok
 import top.yukonga.miuix.kmp.icon.extended.Photos
 import top.yukonga.miuix.kmp.icon.extended.Refresh
 import top.yukonga.miuix.kmp.icon.extended.Reply
 import top.yukonga.miuix.kmp.icon.extended.Search
+import top.yukonga.miuix.kmp.icon.extended.Settings
 import top.yukonga.miuix.kmp.icon.extended.Share
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.darkColorScheme
@@ -68,15 +76,19 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import kotlin.coroutines.cancellation.CancellationException
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
@@ -92,14 +104,20 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import dev.bema.shared.data.model.CustomProfile
+import dev.bema.shared.data.model.GeneralSetting
+import dev.bema.shared.data.model.InstanceSetting
 import dev.bema.shared.data.model.Memo
+import dev.bema.shared.data.model.MemoRelatedSetting
 import dev.bema.shared.data.model.User
 import dev.bema.shared.data.model.Visibility
+import dev.bema.shared.data.model.WorkspaceSetting
 import dev.bema.shared.data.session.MemosAccount
 import dev.bema.shared.data.session.PendingAttachment
 import dev.bema.shared.data.session.MemosAppState
 import dev.bema.shared.data.session.MemosTimelineController
 import dev.bema.shared.data.session.MemosUiController
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlin.math.max
 import kotlin.math.min
@@ -142,27 +160,38 @@ fun BemaMemosApp(controller: MemosUiController = remember { MemosTimelineControl
 
 @Composable
 private fun Avatar(
-    url: String?,
+    bytes: ByteArray?,
     label: String,
-    modifier: Modifier = Modifier,
-    controller: MemosUiController? = null,
-    user: User? = null
+    modifier: Modifier = Modifier
 ) {
-    val bytes by produceState<ByteArray?>(initialValue = null, key1 = user?.username) {
-        value = if (controller != null && user != null) controller.avatarBytes(user) else null
-    }
     Box(
         modifier = modifier
             .clip(CircleShape)
             .background(Color(0xFF202B35)),
         contentAlignment = Alignment.Center
     ) {
-        when {
-            !url.isNullOrBlank() -> AsyncImage(url, label, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-            bytes != null -> AsyncImage(bytes, label, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-            else -> Text(label.trim().firstOrNull()?.uppercase() ?: "M", color = TextPrimary, fontWeight = FontWeight.Bold)
+        if (bytes != null) {
+            AsyncImage(bytes, label, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        } else {
+            Text(label.trim().firstOrNull()?.uppercase() ?: "M", color = TextPrimary, fontWeight = FontWeight.Bold)
         }
     }
+}
+
+@Composable
+private fun UserAvatar(user: User?, label: String, modifier: Modifier = Modifier, controller: MemosUiController) {
+    val bytes by produceState<ByteArray?>(null, user?.username) {
+        value = user?.let { controller.avatarBytes(it) }
+    }
+    Avatar(bytes, label, modifier)
+}
+
+@Composable
+private fun AccountAvatar(account: MemosAccount?, label: String, modifier: Modifier = Modifier, controller: MemosUiController) {
+    val bytes by produceState<ByteArray?>(null, account?.id) {
+        value = account?.let { controller.accountAvatarBytes(it) }
+    }
+    Avatar(bytes, label, modifier)
 }
 
 @Composable
@@ -209,33 +238,98 @@ private fun TimelineShell(state: MemosAppState, controller: MemosUiController) {
     val scope = rememberCoroutineScope()
     var showComposer by remember { mutableStateOf(false) }
     var showAccounts by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(false) }
+    var selectedTab by rememberSaveable { mutableStateOf(0) }
     MiuixScaffold(
         containerColor = Ink,
         topBar = {
-            TimelineHeader(state, controller) { showAccounts = true }
+            if (selectedTab == 1) SearchHeader(state)
+            else TimelineHeader(
+                state,
+                controller,
+                onSearch = { selectedTab = 1 },
+                onAccounts = { showAccounts = true }
+            )
         },
         bottomBar = {
             if (state.selectedMemo == null) {
-                BottomNav(onAdd = { showComposer = true })
+                BottomNav(
+                    selectedTab = selectedTab,
+                    onTabChange = { selectedTab = it },
+                    onSettings = { showSettings = true }
+                )
             }
         },
         floatingActionButton = {
-            if (state.selectedMemo == null) {
+            if (state.selectedMemo == null && selectedTab == 0) {
                 MiuixFloatingActionButton(onClick = { showComposer = true }, containerColor = Accent, shape = CircleShape) {
                     MiuixIcon(MiuixIcons.Add, contentDescription = "New memo", tint = Color.White)
                 }
             }
         }
     ) { padding ->
-        if (state.selectedMemo != null) MemoDetailScreen(state, controller, Modifier.padding(padding))
-        else TimelineScreen(state, controller, Modifier.padding(padding))
+        // Predictive back: the detail screen slides with the system gesture and the
+        // tab underneath stays composed so it is revealed while swiping (and keeps
+        // its scroll position). The handler lives here, not in the detail, so the
+        // launching coroutine survives the screen switch.
+        val detailProgress = remember { Animatable(0f) }
+        var backInProgress by remember { mutableStateOf(false) }
+        val openMemo: (Memo) -> Unit = { memo -> scope.launch { controller.openMemo(memo.name) } }
+
+        PredictiveBackHandler(enabled = state.selectedMemo != null) { events ->
+            backInProgress = true
+            try {
+                events.collect { detailProgress.snapTo(it.progress) }
+                controller.closeMemo()
+            } finally {
+                backInProgress = false
+            }
+        }
+        // Back from the search tab returns to the timeline instead of leaving the app.
+        PredictiveBackHandler(enabled = state.selectedMemo == null && selectedTab == 1) { events ->
+            events.collect { }
+            selectedTab = 0
+        }
+        LaunchedEffect(state.selectedMemo?.name, backInProgress) {
+            when {
+                state.selectedMemo == null -> detailProgress.snapTo(0f)
+                !backInProgress -> detailProgress.animateTo(0f, tween(durationMillis = 200))
+            }
+        }
+
+        Box(Modifier.fillMaxSize()) {
+            if (selectedTab == 1) SearchScreen(state, controller, Modifier.padding(padding), openMemo)
+            else TimelineScreen(state, controller, Modifier.padding(padding), openMemo)
+            if (state.selectedMemo != null) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .graphicsLayer { alpha = 0.6f * (1f - detailProgress.value) }
+                        .background(Ink)
+                        .pointerInput(Unit) { detectTapGestures { } }
+                )
+                MemoDetailScreen(
+                    state,
+                    controller,
+                    Modifier.padding(padding),
+                    backProgress = { detailProgress.value },
+                    onOpen = openMemo
+                )
+            }
+        }
     }
     if (showComposer) ComposerDialog(state, controller) { showComposer = false }
     if (showAccounts) AccountSheet(state, controller) { showAccounts = false }
+    if (showSettings) SettingsSheet(state, controller) { showSettings = false }
 }
 
 @Composable
-private fun TimelineHeader(state: MemosAppState, controller: MemosUiController, onAccounts: () -> Unit) {
+private fun TimelineHeader(
+    state: MemosAppState,
+    controller: MemosUiController,
+    onSearch: () -> Unit,
+    onAccounts: () -> Unit
+) {
     val scope = rememberCoroutineScope()
     Row(
         Modifier.fillMaxWidth().background(Ink).padding(horizontal = 18.dp, vertical = 10.dp),
@@ -251,12 +345,15 @@ private fun TimelineHeader(state: MemosAppState, controller: MemosUiController, 
                 },
             contentAlignment = Alignment.Center
         ) {
-            Avatar(account?.avatarUrl, account?.visibleName ?: "M", Modifier.fillMaxSize(), controller)
+            AccountAvatar(account, account?.visibleName ?: "M", Modifier.fillMaxSize(), controller)
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(account?.siteTitle ?: "Memos", color = TextPrimary, fontWeight = FontWeight.Bold, style = MiuixTheme.textStyles.title3)
             Text(account?.visibleName ?: "@${account?.username ?: "user"}", color = TextSecondary, style = MiuixTheme.textStyles.footnote1)
+        }
+        MiuixIconButton(onClick = onSearch) {
+            MiuixIcon(MiuixIcons.Search, contentDescription = "Search", tint = TextPrimary)
         }
         MiuixIconButton(onClick = { scope.launch { controller.refreshTimeline() } }) {
             MiuixIcon(MiuixIcons.Refresh, contentDescription = "Refresh", tint = TextPrimary)
@@ -265,27 +362,47 @@ private fun TimelineHeader(state: MemosAppState, controller: MemosUiController, 
 }
 
 @Composable
-private fun BottomNav(onAdd: () -> Unit) {
+private fun SearchHeader(state: MemosAppState) {
+    Row(
+        Modifier.fillMaxWidth().background(Ink).padding(horizontal = 18.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text("Search", color = TextPrimary, fontWeight = FontWeight.Bold, style = MiuixTheme.textStyles.title3)
+            Text("in ${state.activeAccount?.siteTitle ?: "Memos"}", color = TextSecondary, style = MiuixTheme.textStyles.footnote1)
+        }
+    }
+}
+
+@Composable
+private fun BottomNav(selectedTab: Int, onTabChange: (Int) -> Unit, onSettings: () -> Unit) {
     MiuixNavigationBar(
         color = Ink.copy(alpha = .98f),
         showDivider = true,
         mode = NavigationBarDisplayMode.IconOnly
     ) {
-        MiuixNavigationBarItem(selected = true, onClick = {}, icon = MiuixIcons.Home, label = "Timeline")
-        MiuixNavigationBarItem(selected = false, onClick = {}, icon = MiuixIcons.Search, label = "Search")
-        MiuixNavigationBarItem(selected = false, onClick = onAdd, icon = MiuixIcons.Notes, label = "Compose")
+        MiuixNavigationBarItem(selected = selectedTab == 0, onClick = { onTabChange(0) }, icon = MiuixIcons.Home, label = "Timeline")
+        MiuixNavigationBarItem(selected = selectedTab == 1, onClick = { onTabChange(1) }, icon = MiuixIcons.Search, label = "Search")
+        MiuixNavigationBarItem(selected = false, onClick = onSettings, icon = MiuixIcons.Settings, label = "Settings")
     }
 }
 
 @Composable
-private fun TimelineScreen(state: MemosAppState, controller: MemosUiController, modifier: Modifier) {
+private fun TimelineScreen(
+    state: MemosAppState,
+    controller: MemosUiController,
+    modifier: Modifier,
+    onOpen: (Memo) -> Unit
+) {
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     val shouldLoadMore by remember { derivedStateOf {
         val info = listState.layoutInfo
         state.canLoadMore && (info.visibleItemsInfo.lastOrNull()?.index ?: 0) >= info.totalItemsCount - 4
     } }
-    LaunchedEffect(Unit) { if (state.timeline.isEmpty()) controller.refreshTimeline() }
+    LaunchedEffect(Unit) {
+        if (state.timeline.isEmpty()) controller.refreshTimeline() else controller.revalidateTimeline()
+    }
     LaunchedEffect(shouldLoadMore) { if (shouldLoadMore) controller.loadMore() }
     LazyColumn(
         state = listState,
@@ -294,20 +411,127 @@ private fun TimelineScreen(state: MemosAppState, controller: MemosUiController, 
     ) {
         item { if (state.isLoading && state.timeline.isEmpty()) LoadingLine() }
         state.error?.let { message -> item { Text(message, color = Color(0xFFFF6B6B), modifier = Modifier.padding(18.dp)) } }
+        if (state.hasNewerMemos) {
+            item {
+                Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
+                    MiuixSurface(
+                        color = InkElevated,
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier.clickable { scope.launch { controller.refreshTimeline() } }
+                    ) {
+                        Text(
+                            "New memos · tap to refresh",
+                            color = Accent,
+                            style = MiuixTheme.textStyles.footnote1,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+                        )
+                    }
+                }
+            }
+        }
         items(state.timeline, key = { it.name }) { memo ->
-            MemoTweet(memo, state.userProfiles[memo.creator.substringAfterLast('/')], controller) { reaction -> scope.launch { controller.react(memo, reaction) } }
+            MemoTweet(
+                memo,
+                state.userProfiles[memo.creator.substringAfterLast('/')],
+                controller,
+                onOpen = { onOpen(memo) },
+                onReact = { reaction -> scope.launch { controller.react(memo, reaction) } }
+            )
         }
         if (state.isLoadingMore) item { LoadingLine() }
     }
 }
 
 @Composable
-private fun MemoTweet(memo: Memo, user: User?, controller: MemosUiController, onReact: (String) -> Unit) {
-    val scope = rememberCoroutineScope()
+private fun SearchScreen(
+    state: MemosAppState,
+    controller: MemosUiController,
+    modifier: Modifier,
+    onOpen: (Memo) -> Unit
+) {
+    var query by rememberSaveable { mutableStateOf("") }
+    var results by remember { mutableStateOf<List<Memo>>(emptyList()) }
+    var isSearching by remember { mutableStateOf(false) }
+    var searchError by remember { mutableStateOf<String?>(null) }
+
+    // Debounce: wait for the keyboard to settle, then hit listMemos with a CEL filter.
+    LaunchedEffect(query) {
+        val trimmed = query.trim()
+        if (trimmed.isEmpty()) {
+            results = emptyList()
+            searchError = null
+            isSearching = false
+            return@LaunchedEffect
+        }
+        isSearching = true
+        try {
+            kotlinx.coroutines.delay(400)
+            results = controller.search(trimmed)
+            searchError = null
+        } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            searchError = e.message ?: "Search failed"
+        }
+        isSearching = false
+    }
+
+    Column(modifier.fillMaxSize().background(Ink)) {
+        MiuixTextField(
+            value = query,
+            onValueChange = { query = it },
+            label = "Search memos",
+            useLabelAsPlaceholder = true,
+            singleLine = true,
+            leadingIcon = { MiuixIcon(MiuixIcons.Search, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(20.dp)) },
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)
+        )
+        when {
+            query.isBlank() -> {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("Search your memos by keyword", color = TextSecondary)
+                }
+            }
+            isSearching -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { LoadingLine() }
+            searchError != null -> Text(searchError!!, color = Color(0xFFFF6B6B), modifier = Modifier.padding(18.dp))
+            results.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("No memos match \"$query\"", color = TextSecondary)
+            }
+            else -> {
+                Text(
+                    "${results.size} ${if (results.size == 1) "result" else "results"}",
+                    color = TextSecondary,
+                    style = MiuixTheme.textStyles.footnote1,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                )
+                LazyColumn(contentPadding = PaddingValues(bottom = 20.dp)) {
+                    items(results, key = { it.name }) { memo ->
+                        MemoTweet(
+                            memo,
+                            state.userProfiles[memo.creator.substringAfterLast('/')],
+                            controller,
+                            onOpen = { onOpen(memo) },
+                            onReact = {}
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MemoTweet(
+    memo: Memo,
+    user: User?,
+    controller: MemosUiController,
+    onOpen: () -> Unit,
+    onReact: (String) -> Unit
+) {
     val name = user?.visibleName ?: memo.creator.substringAfterLast('/').ifBlank { "Memos" }
-    Column(Modifier.fillMaxWidth().clickable { scope.launch { controller.openMemo(memo.name) } }.padding(horizontal = 16.dp, vertical = 14.dp)) {
+    Column(Modifier.fillMaxWidth().clickable(onClick = onOpen).padding(horizontal = 16.dp, vertical = 14.dp)) {
         Row(verticalAlignment = Alignment.Top) {
-            Avatar(user?.avatarUrl, name, Modifier.size(46.dp), controller, user)
+            UserAvatar(user, name, Modifier.size(46.dp), controller)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -321,7 +545,7 @@ private fun MemoTweet(memo: Memo, user: User?, controller: MemosUiController, on
                 MarkdownText(memo.content)
                 if (memo.tags.isNotEmpty()) Text(memo.tags.joinToString("  ") { "#$it" }, color = Accent, modifier = Modifier.padding(top = 8.dp))
                 if (memo.attachments.isNotEmpty()) MediaRail(memo, controller)
-                TweetActions(memo, onReact)
+                TweetActions(memo, onOpen, onReact)
             }
         }
     }
@@ -452,9 +676,9 @@ private fun MediaRail(memo: Memo, controller: MemosUiController) {
 }
 
 @Composable
-private fun TweetActions(memo: Memo, onReact: (String) -> Unit) {
+private fun TweetActions(memo: Memo, onOpen: () -> Unit, onReact: (String) -> Unit) {
     Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-        Action(MiuixIcons.Reply, "Reply", memo.relations.count { it.type.name == "COMMENT" }.toString())
+        Action(MiuixIcons.Reply, "Reply", memo.relations.count { it.type.name == "COMMENT" }.toString(), onClick = onOpen)
         Action(MiuixIcons.Link, "Copy link", "")
         Action(MiuixIcons.Favorites, "React", memo.reactions.size.toString(), onClick = { onReact("❤️") })
         Action(MiuixIcons.Share, "Share", "")
@@ -474,6 +698,7 @@ private fun Action(icon: ImageVector, description: String, count: String, onClic
 private fun ComposerDialog(state: MemosAppState, controller: MemosUiController, onDismiss: () -> Unit) {
     var editor by remember { mutableStateOf(TextFieldValue()) }
     var showPreview by remember { mutableStateOf(false) }
+    var visibility by rememberSaveable { mutableStateOf(Visibility.PRIVATE.name) }
     var attachments by remember { mutableStateOf(emptyList<PendingAttachment>()) }
     val scope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -489,21 +714,28 @@ private fun ComposerDialog(state: MemosAppState, controller: MemosUiController, 
             }.getOrNull()
         }
     }
+    val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     WindowDialog(
         show = true,
         title = "New memo",
         backgroundColor = InkElevated,
         onDismissRequest = onDismiss
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(
+            modifier = Modifier
+                .imePadding()
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
             MarkdownModeToggle(showPreview = showPreview, onPreviewChange = { showPreview = it })
             if (showPreview) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(180.dp)
+                        .heightIn(min = 140.dp, max = 420.dp)
                         .clip(RoundedCornerShape(16.dp))
                         .background(Color(0xFF4A4A4A))
+                        .verticalScroll(rememberScrollState())
                         .padding(16.dp)
                 ) {
                     if (editor.text.isBlank()) {
@@ -513,9 +745,13 @@ private fun ComposerDialog(state: MemosAppState, controller: MemosUiController, 
                     }
                 }
             } else {
-                MarkdownEditor(editor, Modifier.height(180.dp)) { editor = it }
+                // Grows with content; long memos scroll inside the field instead of
+                // pushing the action buttons out of reach.
+                MarkdownEditor(editor, Modifier.fillMaxWidth().heightIn(min = 140.dp, max = 420.dp)) { editor = it }
                 MarkdownToolbar(editor) { editor = it }
             }
+
+            VisibilityPicker(visibility) { visibility = it }
 
             if (attachments.isNotEmpty()) {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -563,21 +799,40 @@ private fun ComposerDialog(state: MemosAppState, controller: MemosUiController, 
                 Text("Add attachments", color = Accent)
             }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                MiuixTextButton(text = "Cancel", onClick = onDismiss, modifier = Modifier.weight(1f))
-                MiuixTextButton(
-                    text = if (state.isPublishing) "Posting" else "Post",
-                    enabled = (editor.text.isNotBlank() || attachments.isNotEmpty()) && !state.isPublishing,
-                    onClick = {
-                        scope.launch {
-                            controller.publish(editor.text, pendingAttachments = attachments)
-                            onDismiss()
-                        }
-                    },
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.textButtonColorsPrimary()
-                )
+            if (!imeVisible) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    MiuixTextButton(text = "Cancel", onClick = onDismiss, modifier = Modifier.weight(1f))
+                    MiuixTextButton(
+                        text = if (state.isPublishing) "Posting" else "Post",
+                        enabled = (editor.text.isNotBlank() || attachments.isNotEmpty()) && !state.isPublishing,
+                        onClick = {
+                            scope.launch {
+                                controller.publish(
+                                    editor.text,
+                                    visibility = Visibility.valueOf(visibility),
+                                    pendingAttachments = attachments
+                                )
+                                onDismiss()
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.textButtonColorsPrimary()
+                    )
+                }
             }
+        }
+    }
+}
+
+@Composable
+private fun VisibilityPicker(selected: String, onChange: (String) -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf(
+            Visibility.PRIVATE to "Private",
+            Visibility.PROTECTED to "Workspace",
+            Visibility.PUBLIC to "Public"
+        ).forEach { (value, label) ->
+            MarkdownModeButton(label, selected == value.name) { onChange(value.name) }
         }
     }
 }
@@ -679,6 +934,197 @@ private fun MarkdownButton(symbol: String, description: String, onClick: () -> U
 }
 
 @Composable
+private fun SettingsSheet(state: MemosAppState, controller: MemosUiController, onDismiss: () -> Unit) {
+    var settings by remember { mutableStateOf<InstanceSetting?>(null) }
+    var loadError by remember { mutableStateOf<String?>(null) }
+    var saving by remember { mutableStateOf(false) }
+    var saveError by remember { mutableStateOf<String?>(null) }
+    var showConfirm by remember { mutableStateOf(false) }
+
+    // Draft copy: only the fields the client can actually manage on Memos v0.22+.
+    var instanceTitle by remember { mutableStateOf("") }
+    var instanceDescription by remember { mutableStateOf("") }
+    var instanceLogoUrl by remember { mutableStateOf("") }
+    var instanceLocale by remember { mutableStateOf("") }
+    var instanceAppearance by remember { mutableStateOf("") }
+    var disallowRegistration by remember { mutableStateOf(false) }
+    var disallowPasswordLogin by remember { mutableStateOf(false) }
+    var enableLinkMetadata by remember { mutableStateOf(true) }
+    var displayWithUpdateTime by remember { mutableStateOf(false) }
+    var announcement by remember { mutableStateOf("") }
+    var maxUploadSizeMiB by remember { mutableStateOf("") }
+    var atomFeedBadgeUrl by remember { mutableStateOf("") }
+    var disallowChangeUsername by remember { mutableStateOf(false) }
+    var disallowChangeNickname by remember { mutableStateOf(false) }
+
+    LaunchedEffect(state.activeAccountId) {
+        try {
+            val loaded = controller.loadInstanceSettings()
+            settings = loaded
+            instanceTitle = loaded.generalSetting?.customProfile?.title.orEmpty()
+            instanceDescription = loaded.generalSetting?.customProfile?.description.orEmpty()
+            instanceLogoUrl = loaded.generalSetting?.customProfile?.logoUrl.orEmpty()
+            instanceLocale = loaded.generalSetting?.customProfile?.locale.orEmpty()
+            instanceAppearance = loaded.generalSetting?.customProfile?.appearance.orEmpty()
+            disallowRegistration = loaded.generalSetting?.disallowUserRegistration ?: false
+            disallowPasswordLogin = loaded.generalSetting?.disallowPasswordLogin ?: false
+            enableLinkMetadata = loaded.memoRelatedSetting?.enableLinkMetadata ?: true
+            displayWithUpdateTime = loaded.memoRelatedSetting?.displayWithUpdateTime ?: false
+            announcement = loaded.workspaceSetting?.announcement.orEmpty()
+            maxUploadSizeMiB = loaded.workspaceSetting?.maxUploadSizeMiB?.takeIf { it > 0 }?.toString().orEmpty()
+            atomFeedBadgeUrl = loaded.workspaceSetting?.atomFeedBadgeUrl.orEmpty()
+            disallowChangeUsername = loaded.workspaceSetting?.disallowChangeUsername ?: false
+            disallowChangeNickname = loaded.workspaceSetting?.disallowChangeNickname ?: false
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            loadError = e.message ?: "Failed to load settings"
+        }
+    }
+
+    WindowDialog(
+        show = true,
+        title = "Settings",
+        backgroundColor = InkElevated,
+        onDismissRequest = onDismiss
+    ) {
+        when {
+            loadError != null -> Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Text(loadError!!, color = Color(0xFFFF6B6B))
+                MiuixTextButton(text = "Close", onClick = onDismiss, modifier = Modifier.fillMaxWidth())
+            }
+            settings == null -> Box(Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) {
+                InfiniteProgressIndicator(color = Accent, size = 26.dp)
+            }
+            else -> Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                SettingsSection("General")
+                SettingsTextField("Instance title", instanceTitle) { instanceTitle = it }
+                SettingsTextField("Description", instanceDescription) { instanceDescription = it }
+                SettingsTextField("Logo URL", instanceLogoUrl) { instanceLogoUrl = it }
+                SettingsTextField("Locale (e.g. en-US, zh-CN)", instanceLocale) { instanceLocale = it }
+                SettingsTextField("Appearance (system / light / dark)", instanceAppearance) { instanceAppearance = it }
+                SettingsSwitch("Disallow user registration", disallowRegistration) { disallowRegistration = it }
+                SettingsSwitch("Disallow password sign-in", disallowPasswordLogin) { disallowPasswordLogin = it }
+
+                SettingsSection("Memo")
+                SettingsSwitch("Fetch link metadata", enableLinkMetadata) { enableLinkMetadata = it }
+                SettingsSwitch("Sort by update time", displayWithUpdateTime) { displayWithUpdateTime = it }
+
+                SettingsSection("Workspace")
+                SettingsTextField("Announcement", announcement) { announcement = it }
+                SettingsTextField("Upload size limit (MiB)", maxUploadSizeMiB) { maxUploadSizeMiB = it }
+                SettingsTextField("Atom feed badge URL", atomFeedBadgeUrl) { atomFeedBadgeUrl = it }
+                SettingsSwitch("Disallow changing username", disallowChangeUsername) { disallowChangeUsername = it }
+                SettingsSwitch("Disallow changing nickname", disallowChangeNickname) { disallowChangeNickname = it }
+
+                saveError?.let { Text(it, color = Color(0xFFFF6B6B)) }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    MiuixTextButton(text = "Cancel", onClick = onDismiss, modifier = Modifier.weight(1f), enabled = !saving)
+                    MiuixTextButton(
+                        text = if (saving) "Saving" else "Save",
+                        enabled = !saving,
+                        onClick = { showConfirm = true },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.textButtonColorsPrimary()
+                    )
+                }
+            }
+        }
+    }
+
+    if (showConfirm) {
+        val scope = rememberCoroutineScope()
+        WindowDialog(
+            show = true,
+            title = "Apply to instance?",
+            backgroundColor = InkElevated,
+            onDismissRequest = { showConfirm = false }
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Text("These changes apply to ${state.activeAccount?.siteTitle ?: "the instance"} and affect every user.", color = TextSecondary)
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    MiuixTextButton(text = "Cancel", onClick = { showConfirm = false }, modifier = Modifier.weight(1f))
+                    MiuixTextButton(
+                        text = "Apply",
+                        onClick = {
+                            showConfirm = false
+                            saving = true
+                            saveError = null
+                            scope.launch {
+                                try {
+                                    // Rebuild from the loaded settings so fields the UI does not
+                                    // edit (e.g. memo reactions) survive the whole-setting replace.
+                                    controller.saveInstanceSettings(
+                                        general = (settings?.generalSetting ?: GeneralSetting()).copy(
+                                            customProfile = (settings?.generalSetting?.customProfile ?: CustomProfile()).copy(
+                                                title = instanceTitle.trim(),
+                                                description = instanceDescription.trim(),
+                                                logoUrl = instanceLogoUrl.trim(),
+                                                locale = instanceLocale.trim(),
+                                                appearance = instanceAppearance.trim()
+                                            ),
+                                            disallowUserRegistration = disallowRegistration,
+                                            disallowPasswordLogin = disallowPasswordLogin
+                                        ),
+                                        memoRelated = (settings?.memoRelatedSetting ?: MemoRelatedSetting()).copy(
+                                            enableLinkMetadata = enableLinkMetadata,
+                                            displayWithUpdateTime = displayWithUpdateTime
+                                        ),
+                                        workspace = (settings?.workspaceSetting ?: WorkspaceSetting()).copy(
+                                            announcement = announcement.trim(),
+                                            maxUploadSizeMiB = maxUploadSizeMiB.trim().toLongOrNull() ?: 0L,
+                                            atomFeedBadgeUrl = atomFeedBadgeUrl.trim(),
+                                            disallowChangeUsername = disallowChangeUsername,
+                                            disallowChangeNickname = disallowChangeNickname
+                                        )
+                                    )
+                                    onDismiss()
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    saveError = e.message ?: "Failed to save settings"
+                                }
+                                saving = false
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.textButtonColorsPrimary()
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsSection(title: String) {
+    Text(title, color = Accent, fontWeight = FontWeight.SemiBold, style = MiuixTheme.textStyles.footnote1)
+}
+
+@Composable
+private fun SettingsSwitch(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, color = TextPrimary, modifier = Modifier.weight(1f))
+        Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
+
+@Composable
+private fun SettingsTextField(label: String, value: String, onValueChange: (String) -> Unit) {
+    MiuixTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = label,
+        useLabelAsPlaceholder = true,
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth()
+    )
+}
+
+@Composable
 private fun AccountSheet(state: MemosAppState, controller: MemosUiController, onDismiss: () -> Unit) {
     WindowDialog(
         show = true,
@@ -702,7 +1148,7 @@ private fun AccountSheet(state: MemosAppState, controller: MemosUiController, on
 private fun AccountRow(account: MemosAccount, selected: Boolean, controller: MemosUiController) {
     val scope = rememberCoroutineScope()
     Row(Modifier.fillMaxWidth().clickable { scope.launch { controller.selectAccount(account.id) } }, verticalAlignment = Alignment.CenterVertically) {
-        Avatar(controller.accountLogoUrl(account).ifBlank { account.avatarUrl }, account.siteTitle, Modifier.size(38.dp), controller)
+        AccountAvatar(account, account.siteTitle, Modifier.size(38.dp), controller)
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(account.siteTitle, color = TextPrimary, fontWeight = FontWeight.SemiBold)
@@ -713,15 +1159,24 @@ private fun AccountRow(account: MemosAccount, selected: Boolean, controller: Mem
 }
 
 @Composable
-private fun MemoDetailScreen(state: MemosAppState, controller: MemosUiController, modifier: Modifier) {
+private fun MemoDetailScreen(
+    state: MemosAppState,
+    controller: MemosUiController,
+    modifier: Modifier,
+    backProgress: () -> Float,
+    onOpen: (Memo) -> Unit
+) {
     val scope = rememberCoroutineScope()
     var comment by remember { mutableStateOf(TextFieldValue()) }
     var showCommentPreview by remember { mutableStateOf(false) }
     var showCommentBox by remember { mutableStateOf(false) }
     val memo = state.selectedMemo ?: return
-    PredictiveBackHandler { controller.closeMemo() }
     
-    Box(modifier.fillMaxSize()) {
+    Box(
+        modifier
+            .fillMaxSize()
+            .graphicsLayer { translationX = backProgress() * size.width }
+    ) {
         LazyColumn(
             Modifier.fillMaxSize().background(Ink),
             contentPadding = PaddingValues(bottom = if (showCommentBox) 300.dp else 28.dp)
@@ -742,7 +1197,15 @@ private fun MemoDetailScreen(state: MemosAppState, controller: MemosUiController
                 }
             }
             
-            item { MemoTweet(memo, state.userProfiles[memo.creator.substringAfterLast('/')], controller) { scope.launch { controller.react(memo, it) } } }
+            item {
+                MemoTweet(
+                    memo,
+                    state.userProfiles[memo.creator.substringAfterLast('/')],
+                    controller,
+                    onOpen = { onOpen(memo) },
+                    onReact = { scope.launch { controller.react(memo, it) } }
+                )
+            }
             
             if (state.selectedComments.isNotEmpty()) {
                 item {
@@ -756,7 +1219,13 @@ private fun MemoDetailScreen(state: MemosAppState, controller: MemosUiController
             }
             
             items(state.selectedComments, key = { it.name }) { reply ->
-                MemoTweet(reply, state.userProfiles[reply.creator.substringAfterLast('/')], controller) { }
+                MemoTweet(
+                    reply,
+                    state.userProfiles[reply.creator.substringAfterLast('/')],
+                    controller,
+                    onOpen = { onOpen(reply) },
+                    onReact = {}
+                )
             }
         }
         
@@ -827,5 +1296,10 @@ private fun MemoDetailScreen(state: MemosAppState, controller: MemosUiController
     }
 }
 
-@Composable private fun LoadingLine() { Box(Modifier.fillMaxWidth().height(80.dp), contentAlignment = Alignment.Center) { Text("Loading…", color = TextSecondary) } }
+@Composable
+private fun LoadingLine() {
+    Box(Modifier.fillMaxWidth().padding(vertical = 18.dp), contentAlignment = Alignment.Center) {
+        InfiniteProgressIndicator(color = Accent, size = 26.dp)
+    }
+}
 private fun formatTime(raw: String?): String = raw?.substringAfter('T')?.substringBefore('.')?.removeSuffix("Z")?.take(5).orEmpty()

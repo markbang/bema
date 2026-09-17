@@ -5,13 +5,17 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import dev.bema.shared.data.model.Attachment
+import dev.bema.shared.data.model.GeneralSetting
+import dev.bema.shared.data.model.InstanceSetting
 import dev.bema.shared.data.model.Memo
+import dev.bema.shared.data.model.MemoRelatedSetting
 import dev.bema.shared.data.model.MemoState
 import dev.bema.shared.data.model.Reaction
 import dev.bema.shared.data.model.User
 import dev.bema.shared.data.model.UserRole
 import dev.bema.shared.data.model.UserState
 import dev.bema.shared.data.model.Visibility
+import dev.bema.shared.data.model.WorkspaceSetting
 import dev.bema.shared.data.session.MemosAccount
 import dev.bema.shared.data.session.MemosAppState
 import dev.bema.shared.data.session.MemosUiController
@@ -33,6 +37,12 @@ private class PreviewMemosController(private val context: Context) : MemosUiCont
     private val lin = user("lin", "Lin", R.drawable.preview_avatar_lin)
     private val max = user("maxfast", "拾一 · Max Fast", R.drawable.preview_avatar_mika)
     private val mika = user("mika", "Mika", R.drawable.preview_avatar_rin)
+
+    private val avatarResources = mapOf(
+        "lin" to R.drawable.preview_avatar_lin,
+        "maxfast" to R.drawable.preview_avatar_mika,
+        "mika" to R.drawable.preview_avatar_rin
+    )
 
     private val accounts = listOf(
         account("bema", "Bema Notes", "Lin", R.drawable.ic_launcher_foreground),
@@ -114,7 +124,20 @@ private class PreviewMemosController(private val context: Context) : MemosUiCont
 
     override suspend fun refreshTimeline(filter: String) = Unit
 
+    override suspend fun revalidateTimeline() = Unit
+
     override suspend fun loadMore() = Unit
+
+    override suspend fun search(query: String): List<Memo> =
+        _state.value.timeline.filter { it.content.contains(query, ignoreCase = true) }
+
+    override suspend fun loadInstanceSettings(): InstanceSetting = InstanceSetting(name = "instanceSettings/GENERAL")
+
+    override suspend fun saveInstanceSettings(
+        general: GeneralSetting,
+        memoRelated: MemoRelatedSetting,
+        workspace: WorkspaceSetting
+    ) = Unit
 
     override suspend fun publish(content: String, visibility: Visibility, pendingAttachments: List<PendingAttachment>) {
         val memo = Memo(
@@ -163,7 +186,15 @@ private class PreviewMemosController(private val context: Context) : MemosUiCont
 
     override fun accountLogoUrl(account: MemosAccount): String = account.siteLogoUrl
 
-    override suspend fun avatarBytes(user: User): ByteArray? = null
+    override suspend fun avatarBytes(user: User): ByteArray? =
+        avatarResources[user.username]?.let { resource ->
+            runCatching { context.resources.openRawResource(resource).use { it.readBytes() } }.getOrNull()
+        }
+
+    override suspend fun accountAvatarBytes(account: MemosAccount): ByteArray? =
+        account.avatarUrl.substringAfterLast('/').toIntOrNull()?.let { id ->
+            runCatching { context.resources.openRawResource(id).use { it.readBytes() } }.getOrNull()
+        }
 
     override suspend fun attachmentBytes(attachment: Attachment, thumbnail: Boolean): ByteArray? {
         val resource = when (attachment.uid) {

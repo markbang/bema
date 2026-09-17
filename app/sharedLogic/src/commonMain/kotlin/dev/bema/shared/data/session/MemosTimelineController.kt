@@ -1,9 +1,13 @@
 package dev.bema.shared.data.session
 
 import dev.bema.shared.data.model.Attachment
+import dev.bema.shared.data.model.GeneralSetting
+import dev.bema.shared.data.model.InstanceSetting
 import dev.bema.shared.data.model.Memo
+import dev.bema.shared.data.model.MemoRelatedSetting
 import dev.bema.shared.data.model.User
 import dev.bema.shared.data.model.Visibility
+import dev.bema.shared.data.model.WorkspaceSetting
 import dev.bema.shared.data.network.MemosApi
 import dev.bema.shared.data.network.PersistentCookieStorage
 import dev.bema.shared.data.network.normalizeInstanceUrl
@@ -12,11 +16,14 @@ import dev.bema.shared.data.storage.PlatformKeyValueStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlin.io.encoding.Base64
+import kotlin.io.encoding.ExperimentalEncodingApi
 
 @Serializable
 data class PendingAttachment(
@@ -51,7 +58,9 @@ data class MemosAppState(
     val isLoadingMore: Boolean = false,
     val isPublishing: Boolean = false,
     val error: String? = null,
-    val userProfiles: Map<String, User> = emptyMap()
+    val userProfiles: Map<String, User> = emptyMap(),
+    // Set when a silent refresh found memos newer than the visible cached list.
+    val hasNewerMemos: Boolean = false
 ) {
     val activeAccount: MemosAccount? get() = accounts.firstOrNull { it.id == activeAccountId }
     val canLoadMore: Boolean get() = nextPageToken.isNotBlank() && !isLoadingMore
@@ -63,7 +72,16 @@ interface MemosUiController {
     suspend fun addAccount(instanceUrl: String, username: String, password: String)
     suspend fun selectAccount(accountId: String)
     suspend fun refreshTimeline(filter: String = "")
+    // Silent check for newer memos; shows a banner instead of jumping the visible list.
+    suspend fun revalidateTimeline()
     suspend fun loadMore()
+    suspend fun search(query: String): List<Memo>
+    suspend fun loadInstanceSettings(): InstanceSetting
+    suspend fun saveInstanceSettings(
+        general: GeneralSetting,
+        memoRelated: MemoRelatedSetting,
+        workspace: WorkspaceSetting
+    )
     suspend fun publish(
         content: String,
         visibility: Visibility = Visibility.PRIVATE,
@@ -76,14 +94,24 @@ interface MemosUiController {
     fun siteLogoUrl(): String
     fun accountLogoUrl(account: MemosAccount): String
     suspend fun avatarBytes(user: User): ByteArray?
+    suspend fun accountAvatarBytes(account: MemosAccount): ByteArray?
     suspend fun attachmentBytes(attachment: Attachment, thumbnail: Boolean = false): ByteArray?
 }
 
+@Serializable
+private data class CachedTimeline(
+    val memos: List<Memo> = emptyList(),
+    val nextPageToken: String = "",
+    val savedAt: Instant? = null
+)
+
+@OptIn(ExperimentalEncodingApi::class)
 class MemosTimelineController(
     private val keyValueStore: KeyValueStore = PlatformKeyValueStore
 ) : MemosUiController {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = false }
     private val sessions = mutableMapOf<String, AccountSession>()
+    private val avatarCache = mutableMapOf<String, ByteArray>()
     private val _state = MutableStateFlow(loadState())
     override val state: StateFlow<MemosAppState> = _state
 
@@ -131,11 +159,12 @@ class MemosTimelineController(
     override suspend fun selectAccount(accountId: String) {
         if (_state.value.activeAccountId == accountId) return
         require(_state.value.accounts.any { it.id == accountId }) { "Unknown account" }
+        val cached = loadCachedTimeline(accountId)
         _state.update {
             it.copy(
                 activeAccountId = accountId,
-                timeline = emptyList(),
-                nextPageToken = "",
+                timeline = cached?.memos.orEmpty(),
+                nextPageToken = cached?.nextPageToken.orEmpty(),
                 selectedMemo = null,
                 selectedComments = emptyList(),
                 error = null
@@ -170,22 +199,64 @@ class MemosTimelineController(
 
     override suspend fun refreshTimeline(filter: String) {
         val session = activeSessionOrNull() ?: return
-        setBusy(isLoading = true)
+        val accountId = _state.value.activeAccountId
+        // Show stale content while revalidating instead of an empty loading screen.
+        setBusy(isLoading = _state.value.timeline.isEmpty())
         runCatching {
             val response = session.api.listMemos(filter = filter)
             val profiles = session.loadUsers(response.memos)
-            _state.update {
-                it.copy(
+            _state.update { current ->
+                current.copy(
                     timeline = response.memos,
                     nextPageToken = response.nextPageToken,
                     selectedMemo = null,
                     selectedComments = emptyList(),
                     userProfiles = profiles,
+                    hasNewerMemos = false,
                     error = null
                 )
             }
-        }.onFailure { error -> _state.update { it.copy(error = error.message ?: "Failed to load timeline") } }
+            persistTimeline(accountId, response.memos, response.nextPageToken)
+        }.onFailure { error ->
+            // Serve the cache when offline instead of a dead-end error screen.
+            if (_state.value.timeline.isEmpty()) {
+                _state.update { it.copy(error = error.message ?: "Failed to load timeline") }
+            }
+        }
         setBusy(isLoading = false)
+    }
+
+    private var revalidating = false
+
+    // Silent refresh on timeline entry: if the server has newer memos than the
+    // visible (cached) list, surface a banner instead of shifting content mid-read.
+    override suspend fun revalidateTimeline() {
+        val session = activeSessionOrNull() ?: return
+        if (revalidating || _state.value.isLoading) return
+        revalidating = true
+        try {
+            val response = session.api.listMemos()
+            val profiles = session.loadUsers(response.memos)
+            _state.update { current ->
+                val hasNewer = current.timeline.isNotEmpty() &&
+                    response.memos.firstOrNull()?.name != current.timeline.first().name
+                current.copy(
+                    timeline = if (hasNewer) current.timeline else response.memos,
+                    nextPageToken = if (hasNewer) current.nextPageToken else response.nextPageToken,
+                    userProfiles = current.userProfiles + profiles,
+                    hasNewerMemos = hasNewer,
+                    error = null
+                )
+            }
+            if (!_state.value.hasNewerMemos) {
+                persistTimeline(_state.value.activeAccountId, _state.value.timeline, _state.value.nextPageToken)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // Silent revalidation stays quiet on failure; the cache remains visible.
+        }
+        revalidating = false
     }
 
     override suspend fun loadMore() {
@@ -204,9 +275,53 @@ class MemosTimelineController(
                     error = null
                 )
             }
+            persistTimeline(_state.value.activeAccountId, _state.value.timeline, _state.value.nextPageToken)
         }.onFailure { error -> _state.update { it.copy(error = error.message ?: "Failed to load more") } }
         _state.update { it.copy(isLoadingMore = false) }
     }
+
+    // Memos has no dedicated search endpoint; the web app searches by passing a
+    // CEL filter to listMemos, so mirror that here.
+    override suspend fun search(query: String): List<Memo> {
+        val trimmed = query.trim()
+        val session = activeSessionOrNull() ?: return emptyList()
+        val response = session.api.listMemos(pageSize = 50, filter = "content.contains(\"${celEscape(trimmed)}\")")
+        val profiles = session.loadUsers(response.memos)
+        _state.update { it.copy(userProfiles = it.userProfiles + profiles) }
+        return response.memos
+    }
+
+    override suspend fun loadInstanceSettings(): InstanceSetting {
+        val session = activeSessionOrNull() ?: error("No active account")
+        return session.api.instanceSetting("GENERAL")
+    }
+
+    override suspend fun saveInstanceSettings(
+        general: GeneralSetting,
+        memoRelated: MemoRelatedSetting,
+        workspace: WorkspaceSetting
+    ) {
+        val account = _state.value.activeAccount ?: error("No active account")
+        val session = activeSessionOrNull() ?: error("No active account")
+        session.api.updateInstanceSetting(InstanceSetting(name = "instanceSettings/GENERAL", generalSetting = general))
+        session.api.updateInstanceSetting(InstanceSetting(name = "instanceSettings/MEMO_RELATED", memoRelatedSetting = memoRelated))
+        session.api.updateInstanceSetting(InstanceSetting(name = "instanceSettings/WORKSPACE", workspaceSetting = workspace))
+        // Custom profile (title/logo) feeds the header and account switcher; refresh the cached account.
+        val refreshed = account.copy(
+            siteTitle = general.customProfile?.title?.ifBlank { "Memos" } ?: "Memos",
+            siteLogoUrl = general.customProfile?.logoUrl.orEmpty()
+        )
+        if (refreshed != account) {
+            sessions[account.id] = AccountSession(refreshed)
+            _state.update { current ->
+                current.copy(accounts = current.accounts.map { if (it.id == refreshed.id) refreshed else it })
+            }
+            persistAccounts()
+        }
+    }
+
+    private fun celEscape(value: String): String =
+        value.replace("\\", "\\\\").replace("\"", "\\\"")
 
     override suspend fun publish(
         content: String,
@@ -222,19 +337,37 @@ class MemosTimelineController(
                 session.api.createAttachment(upload.filename, upload.content, upload.type)
             }
             val memo = session.api.createMemo(body, visibility, attachments = attachments)
-            _state.update { it.copy(timeline = listOf(memo) + it.timeline, error = null) }
+            _state.update {
+                it.copy(
+                    timeline = listOf(memo) + it.timeline,
+                    hasNewerMemos = false,
+                    error = null
+                )
+            }
+            persistTimeline(_state.value.activeAccountId, _state.value.timeline, _state.value.nextPageToken)
         }.onFailure { error -> _state.update { it.copy(error = error.message ?: "Publish failed") } }
         _state.update { it.copy(isPublishing = false) }
     }
 
     override suspend fun openMemo(name: String) {
         val session = activeSessionOrNull() ?: return
-        setBusy(isLoading = true)
-        runCatching {
+        // Render the memo we already have right away so tapping a post responds
+        // instantly; the fresh copy and its replies replace it when the network returns.
+        val cached = _state.value.timeline.firstOrNull { it.name == name }
+        if (cached != null) {
+            _state.update { it.copy(selectedMemo = cached, selectedComments = emptyList(), error = null) }
+        } else {
+            setBusy(isLoading = true)
+        }
+        try {
             val memo = session.api.getMemo(name)
             val comments = session.api.listComments(name).memos
             _state.update { it.copy(selectedMemo = memo, selectedComments = comments, error = null) }
-        }.onFailure { error -> _state.update { it.copy(error = error.message ?: "Failed to open memo") } }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            _state.update { it.copy(error = e.message ?: "Failed to open memo") }
+        }
         setBusy(isLoading = false)
     }
 
@@ -279,11 +412,48 @@ class MemosTimelineController(
     override fun accountLogoUrl(account: MemosAccount): String =
         sessions[account.id]?.api?.assetUrl(account.siteLogoUrl).orEmpty()
 
-    override suspend fun avatarBytes(user: User): ByteArray? =
-        runCatching {
-            val session = activeSessionOrNull() ?: return@runCatching null
-            session.api.getUrlBytes(session.api.userAvatarUrl(user.username))
-        }.getOrNull()
+    // Memos reports avatarUrl as an instance-relative path (or omits it); resolve
+    // it against the account's base URL and fetch with session credentials since
+    // Coil cannot attach the auth token itself. Avatars are small and immutable;
+    // disk-cache them so timelines render instantly on relaunch.
+    override suspend fun avatarBytes(user: User): ByteArray? {
+        val session = activeSessionOrNull() ?: return null
+        val account = _state.value.activeAccount
+        return diskCachedBytes("avatar.${account?.id.orEmpty()}.${user.username}") {
+            session.api.getUrlBytes(session.api.assetUrl(user.avatarUrl.ifBlank { "file/users/${user.username}/avatar" }))
+        }
+    }
+
+    override suspend fun accountAvatarBytes(account: MemosAccount): ByteArray? {
+        val session = sessions.getOrPut(account.id) { AccountSession(account) }
+        return diskCachedBytes("avatar.${account.id}") {
+            session.api.getUrlBytes(session.api.assetUrl(account.avatarUrl.ifBlank { "file/users/${account.username}/avatar" }))
+        }
+    }
+
+    private suspend fun diskCachedBytes(key: String, fetch: suspend () -> ByteArray): ByteArray? {
+        avatarCache[key]?.let { return it }
+        keyValueStore.getString(key)?.let { encoded ->
+            runCatching { Base64.decode(encoded) }.getOrNull()?.let { bytes ->
+                avatarCache[key] = bytes
+                return bytes
+            }
+        }
+        // Avatar failures are cosmetic; fall back to the initial letter instead of surfacing errors.
+        return try {
+            fetch().also { bytes ->
+                avatarCache[key] = bytes
+                // Keep the encrypted store small; skip unusually large avatars.
+                if (bytes.size <= MAX_CACHED_AVATAR_BYTES) {
+                    runCatching { keyValueStore.putString(key, Base64.encode(bytes)) }
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+    }
 
     override suspend fun attachmentBytes(attachment: Attachment, thumbnail: Boolean): ByteArray? =
         runCatching { activeSessionOrNull()?.api?.getAttachmentBytes(attachment, thumbnail) }.getOrNull()
@@ -305,7 +475,30 @@ class MemosTimelineController(
         val accounts = stored?.accounts.orEmpty()
         val active = stored?.activeAccountId?.takeIf { id -> accounts.any { it.id == id } }
             ?: accounts.firstOrNull()?.id.orEmpty()
-        return MemosAppState(accounts = accounts, activeAccountId = active)
+        val cached = if (active.isBlank()) null else loadCachedTimeline(active)
+        return MemosAppState(
+            accounts = accounts,
+            activeAccountId = active,
+            timeline = cached?.memos.orEmpty(),
+            nextPageToken = cached?.nextPageToken.orEmpty()
+        )
+    }
+
+    private fun loadCachedTimeline(accountId: String): CachedTimeline? = runCatching {
+        keyValueStore.getString(TIMELINE_KEY_PREFIX + accountId)?.let { json.decodeFromString<CachedTimeline>(it) }
+    }.getOrNull()
+
+    // Cap the persisted list so the encrypted store stays small; the newest page is what matters offline.
+    private fun persistTimeline(accountId: String, memos: List<Memo>, nextPageToken: String) {
+        if (accountId.isBlank() || memos.isEmpty()) return
+        runCatching {
+            val snapshot = CachedTimeline(
+                memos = memos.take(CACHED_MEMO_LIMIT),
+                nextPageToken = nextPageToken,
+                savedAt = Clock.System.now()
+            )
+            keyValueStore.putString(TIMELINE_KEY_PREFIX + accountId, json.encodeToString(snapshot))
+        }
     }
 
     private fun persistAccounts() {
@@ -358,6 +551,9 @@ class MemosTimelineController(
 
     companion object {
         private const val ACCOUNTS_KEY = "memos.accounts"
+        private const val TIMELINE_KEY_PREFIX = "memos.timeline."
+        private const val CACHED_MEMO_LIMIT = 100
+        private const val MAX_CACHED_AVATAR_BYTES = 512 * 1024
 
         private fun accountId(instanceUrl: String, username: String): String {
             val raw = "${normalizeInstanceUrl(instanceUrl)}:${username.trim().lowercase()}"
