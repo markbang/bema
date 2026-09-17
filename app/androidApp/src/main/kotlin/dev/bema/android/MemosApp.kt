@@ -1,5 +1,10 @@
 package dev.bema.android
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.widget.Toast
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -32,6 +37,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -55,6 +62,7 @@ import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Add
 import top.yukonga.miuix.kmp.icon.extended.Back
 import top.yukonga.miuix.kmp.icon.extended.Favorites
+import top.yukonga.miuix.kmp.icon.extended.FavoritesFill
 import top.yukonga.miuix.kmp.icon.extended.Home
 import top.yukonga.miuix.kmp.icon.extended.Link
 import top.yukonga.miuix.kmp.icon.extended.More
@@ -94,6 +102,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -246,6 +255,12 @@ private fun TimelineShell(state: MemosAppState, controller: MemosUiController) {
     var showAccounts by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var selectedTab by rememberSaveable { mutableStateOf(0) }
+    var commentOnOpen by remember { mutableStateOf(false) }
+    var imageViewer by remember { mutableStateOf<ImageViewerTarget?>(null) }
+    val detailProgress = remember { Animatable(0f) }
+    var backInProgress by remember { mutableStateOf(false) }
+    val viewerProgress = remember { Animatable(0f) }
+    var viewerBackInProgress by remember { mutableStateOf(false) }
     MiuixScaffold(
         containerColor = Ink,
         topBar = {
@@ -258,7 +273,7 @@ private fun TimelineShell(state: MemosAppState, controller: MemosUiController) {
             )
         },
         bottomBar = {
-            if (state.selectedMemo == null) {
+            if (state.selectedMemo == null && imageViewer == null) {
                 BottomNav(
                     selectedTab = selectedTab,
                     onTabChange = { selectedTab = it },
@@ -267,7 +282,7 @@ private fun TimelineShell(state: MemosAppState, controller: MemosUiController) {
             }
         },
         floatingActionButton = {
-            if (state.selectedMemo == null && selectedTab == 0) {
+            if (state.selectedMemo == null && selectedTab == 0 && imageViewer == null) {
                 MiuixFloatingActionButton(onClick = { showComposer = true }, containerColor = Accent, shape = CircleShape) {
                     MiuixIcon(MiuixIcons.Add, contentDescription = "New memo", tint = Color.White)
                 }
@@ -278,11 +293,19 @@ private fun TimelineShell(state: MemosAppState, controller: MemosUiController) {
         // tab underneath stays composed so it is revealed while swiping (and keeps
         // its scroll position). The handler lives here, not in the detail, so the
         // launching coroutine survives the screen switch.
-        val detailProgress = remember { Animatable(0f) }
-        var backInProgress by remember { mutableStateOf(false) }
         val openMemo: (Memo) -> Unit = { memo -> scope.launch { controller.openMemo(memo.name) } }
+        val openImage: (Memo, Int) -> Unit = { memo, index -> imageViewer = ImageViewerTarget(memo, index) }
 
-        PredictiveBackHandler(enabled = state.selectedMemo != null) { events ->
+        PredictiveBackHandler(enabled = imageViewer != null) { events ->
+            viewerBackInProgress = true
+            try {
+                events.collect { viewerProgress.snapTo(it.progress) }
+                imageViewer = null
+            } finally {
+                viewerBackInProgress = false
+            }
+        }
+        PredictiveBackHandler(enabled = imageViewer == null && state.selectedMemo != null) { events ->
             backInProgress = true
             try {
                 events.collect { detailProgress.snapTo(it.progress) }
@@ -292,7 +315,7 @@ private fun TimelineShell(state: MemosAppState, controller: MemosUiController) {
             }
         }
         // Back from the search tab returns to the timeline instead of leaving the app.
-        PredictiveBackHandler(enabled = state.selectedMemo == null && selectedTab == 1) { events ->
+        PredictiveBackHandler(enabled = imageViewer == null && state.selectedMemo == null && selectedTab == 1) { events ->
             events.collect { }
             selectedTab = 0
         }
@@ -302,10 +325,22 @@ private fun TimelineShell(state: MemosAppState, controller: MemosUiController) {
                 !backInProgress -> detailProgress.animateTo(0f, tween(durationMillis = 200))
             }
         }
+        LaunchedEffect(imageViewer, viewerBackInProgress) {
+            when {
+                imageViewer == null -> viewerProgress.snapTo(0f)
+                !viewerBackInProgress -> viewerProgress.animateTo(0f, tween(durationMillis = 200))
+            }
+        }
 
         Box(Modifier.fillMaxSize()) {
-            if (selectedTab == 1) SearchScreen(state, controller, Modifier.padding(padding), openMemo)
-            else TimelineScreen(state, controller, Modifier.padding(padding), openMemo)
+            if (selectedTab == 1) {
+                SearchScreen(state, controller, Modifier.padding(padding), openMemo, openImage)
+            } else {
+                TimelineScreen(state, controller, Modifier.padding(padding), openMemo, { memo ->
+                    commentOnOpen = true
+                    openMemo(memo)
+                }, openImage)
+            }
             if (state.selectedMemo != null) {
                 Box(
                     Modifier
@@ -319,10 +354,20 @@ private fun TimelineShell(state: MemosAppState, controller: MemosUiController) {
                     controller,
                     Modifier.padding(padding),
                     backProgress = { detailProgress.value },
-                    onOpen = openMemo
+                    startComment = commentOnOpen,
+                    onCommentConsumed = { commentOnOpen = false },
+                    onOpenImage = openImage
                 )
             }
         }
+    }
+    imageViewer?.let { target ->
+        ImageViewer(
+            target = target,
+            controller = controller,
+            backProgress = { viewerProgress.value },
+            onClose = { imageViewer = null }
+        )
     }
     if (showComposer) ComposerDialog(state, controller) { showComposer = false }
     if (showAccounts) AccountSheet(state, controller) { showAccounts = false }
@@ -398,7 +443,9 @@ private fun TimelineScreen(
     state: MemosAppState,
     controller: MemosUiController,
     modifier: Modifier,
-    onOpen: (Memo) -> Unit
+    onOpen: (Memo) -> Unit,
+    onReply: (Memo) -> Unit,
+    onOpenImage: (Memo, Int) -> Unit
 ) {
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
@@ -440,8 +487,11 @@ private fun TimelineScreen(
                 memo,
                 state.userProfiles[memo.creator.substringAfterLast('/')],
                 controller,
+                liked = memo.isLikedBy(state.activeAccount),
                 onOpen = { onOpen(memo) },
-                onReact = { reaction -> scope.launch { controller.react(memo, reaction) } }
+                onReply = { onReply(memo) },
+                onReact = { scope.launch { controller.react(memo, "❤️") } },
+                onOpenImage = { index -> onOpenImage(memo, index) }
             )
         }
         if (state.isLoadingMore) item { LoadingLine() }
@@ -453,12 +503,14 @@ private fun SearchScreen(
     state: MemosAppState,
     controller: MemosUiController,
     modifier: Modifier,
-    onOpen: (Memo) -> Unit
+    onOpen: (Memo) -> Unit,
+    onOpenImage: (Memo, Int) -> Unit
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     var results by remember { mutableStateOf<List<Memo>>(emptyList()) }
     var isSearching by remember { mutableStateOf(false) }
     var searchError by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
 
     // Debounce: wait for the keyboard to settle, then hit listMemos with a CEL filter.
     LaunchedEffect(query) {
@@ -523,8 +575,11 @@ private fun SearchScreen(
                             memo,
                             state.userProfiles[memo.creator.substringAfterLast('/')],
                             controller,
+                            liked = memo.isLikedBy(state.activeAccount),
                             onOpen = { onOpen(memo) },
-                            onReact = {}
+                            onReply = { onOpen(memo) },
+                            onReact = { scope.launch { controller.react(memo, "❤️") } },
+                            onOpenImage = { index -> onOpenImage(memo, index) }
                         )
                     }
                 }
@@ -538,27 +593,40 @@ private fun MemoTweet(
     memo: Memo,
     user: User?,
     controller: MemosUiController,
+    liked: Boolean,
     onOpen: () -> Unit,
-    onReact: (String) -> Unit
+    onReply: () -> Unit,
+    onReact: () -> Unit,
+    onOpenImage: (Int) -> Unit
 ) {
+    val context = LocalContext.current
     val name = user?.visibleName ?: memo.creator.substringAfterLast('/').ifBlank { "Memos" }
-    Column(Modifier.fillMaxWidth().clickable(onClick = onOpen).padding(horizontal = 16.dp, vertical = 14.dp)) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp)) {
         Row(verticalAlignment = Alignment.Top) {
             UserAvatar(user, name, Modifier.size(46.dp), controller)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(name, color = TextPrimary, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Spacer(Modifier.width(6.dp))
-                    Text("@${user?.username ?: memo.creator.substringAfterLast('/')}", color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Spacer(Modifier.width(6.dp))
-                    Text("· ${formatTime(memo.createTime?.toString())}", color = TextSecondary, maxLines = 1)
+                Column(Modifier.clickable(onClick = onOpen)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(name, color = TextPrimary, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Spacer(Modifier.width(6.dp))
+                        Text("@${user?.username ?: memo.creator.substringAfterLast('/')}", color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Spacer(Modifier.width(6.dp))
+                        Text("· ${formatTime(memo.createTime?.toString())}", color = TextSecondary, maxLines = 1)
+                    }
+                    Spacer(Modifier.height(5.dp))
+                    MarkdownText(memo.content)
+                    if (memo.tags.isNotEmpty()) Text(memo.tags.joinToString("  ") { "#$it" }, color = Accent, modifier = Modifier.padding(top = 8.dp))
                 }
-                Spacer(Modifier.height(5.dp))
-                MarkdownText(memo.content)
-                if (memo.tags.isNotEmpty()) Text(memo.tags.joinToString("  ") { "#$it" }, color = Accent, modifier = Modifier.padding(top = 8.dp))
-                if (memo.attachments.isNotEmpty()) MediaRail(memo, controller)
-                TweetActions(memo, onOpen, onReact)
+                if (memo.attachments.isNotEmpty()) MediaRail(memo, controller, onOpenImage)
+                TweetActions(
+                    memo,
+                    liked,
+                    onReply = onReply,
+                    onCopyLink = { copyMemoLink(context, controller.memoUrl(memo)) },
+                    onReact = onReact,
+                    onShare = { shareMemo(context, memo, controller.memoUrl(memo)) }
+                )
             }
         }
     }
@@ -674,36 +742,68 @@ private fun markdownInline(input: String): AnnotatedString = buildAnnotatedStrin
 }
 
 @Composable
-private fun MediaRail(memo: Memo, controller: MemosUiController) {
+private fun MediaRail(memo: Memo, controller: MemosUiController, onOpenImage: (Int) -> Unit) {
+    val images = memo.attachments.filter { it.isImage }
     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 12.dp)) {
-        items(memo.attachments.filter { it.isImage }, key = { it.name }) { attachment ->
+        items(images.size) { index ->
+            val attachment = images[index]
             val bytes by produceState<ByteArray?>(null, attachment.name) { value = controller.attachmentBytes(attachment, thumbnail = true) }
             AsyncImage(
                 model = bytes,
                 contentDescription = attachment.filename,
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.size(width = 260.dp, height = 210.dp).clip(RoundedCornerShape(16.dp)).background(InkElevated)
+                modifier = Modifier
+                    .size(width = 260.dp, height = 210.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(InkElevated)
+                    .clickable { onOpenImage(index) }
             )
         }
     }
 }
 
 @Composable
-private fun TweetActions(memo: Memo, onOpen: () -> Unit, onReact: (String) -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-        Action(MiuixIcons.Reply, "Reply", memo.relations.count { it.type.name == "COMMENT" }.toString(), onClick = onOpen)
-        Action(MiuixIcons.Link, "Copy link", "")
-        Action(MiuixIcons.Favorites, "React", memo.reactions.size.toString(), onClick = { onReact("❤️") })
-        Action(MiuixIcons.Share, "Share", "")
-        Action(MiuixIcons.More, "More", "")
+private fun TweetActions(
+    memo: Memo,
+    liked: Boolean,
+    onReply: () -> Unit,
+    onCopyLink: () -> Unit,
+    onReact: () -> Unit,
+    onShare: () -> Unit
+) {
+    val comments = memo.relations.count { it.type.name == "COMMENT" }
+    Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+        Action(MiuixIcons.Reply, "Reply", comments.takeIf { it > 0 }?.toString().orEmpty(), onClick = onReply)
+        Action(MiuixIcons.Link, "Copy link", "", onClick = onCopyLink)
+        Action(
+            icon = if (liked) MiuixIcons.FavoritesFill else MiuixIcons.Favorites,
+            description = "Like",
+            count = memo.reactions.size.takeIf { it > 0 }?.toString().orEmpty(),
+            active = liked,
+            onClick = onReact
+        )
+        Action(MiuixIcons.Share, "Share", "", onClick = onShare)
     }
 }
 
 @Composable
-private fun Action(icon: ImageVector, description: String, count: String, onClick: (() -> Unit)? = null) {
-    Row(Modifier.clickable(enabled = onClick != null) { onClick?.invoke() }, verticalAlignment = Alignment.CenterVertically) {
-        MiuixIcon(icon, contentDescription = description, tint = TextSecondary, modifier = Modifier.size(20.dp))
-        if (count.isNotBlank()) Text("  $count", color = TextSecondary, style = MiuixTheme.textStyles.footnote2)
+private fun Action(
+    icon: ImageVector,
+    description: String,
+    count: String,
+    active: Boolean = false,
+    onClick: () -> Unit
+) {
+    val tint = if (active) Accent else TextSecondary
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        MiuixIcon(icon, contentDescription = description, tint = tint, modifier = Modifier.size(20.dp))
+        if (count.isNotBlank()) Text("  $count", color = tint, style = MiuixTheme.textStyles.footnote2)
     }
 }
 
@@ -1401,13 +1501,30 @@ private fun MemoDetailScreen(
     controller: MemosUiController,
     modifier: Modifier,
     backProgress: () -> Float,
-    onOpen: (Memo) -> Unit
+    startComment: Boolean,
+    onCommentConsumed: () -> Unit,
+    onOpenImage: (Memo, Int) -> Unit
 ) {
     val scope = rememberCoroutineScope()
     var comment by remember { mutableStateOf(TextFieldValue()) }
     var showCommentPreview by remember { mutableStateOf(false) }
-    var showCommentBox by remember { mutableStateOf(false) }
+    var showCommentBox by remember { mutableStateOf(startComment) }
+    val commentProgress = remember { Animatable(0f) }
     val memo = state.selectedMemo ?: return
+    LaunchedEffect(startComment) {
+        if (startComment) {
+            showCommentBox = true
+            onCommentConsumed()
+        }
+    }
+    PredictiveBackHandler(enabled = showCommentBox) { events ->
+        try {
+            events.collect { commentProgress.snapTo(it.progress) }
+            showCommentBox = false
+        } finally {
+            commentProgress.snapTo(0f)
+        }
+    }
     
     Box(
         modifier
@@ -1439,8 +1556,11 @@ private fun MemoDetailScreen(
                     memo,
                     state.userProfiles[memo.creator.substringAfterLast('/')],
                     controller,
-                    onOpen = { onOpen(memo) },
-                    onReact = { scope.launch { controller.react(memo, it) } }
+                    liked = memo.isLikedBy(state.activeAccount),
+                    onOpen = {},
+                    onReply = { showCommentBox = true },
+                    onReact = { scope.launch { controller.react(memo, "❤️") } },
+                    onOpenImage = { index -> onOpenImage(memo, index) }
                 )
             }
             
@@ -1460,8 +1580,11 @@ private fun MemoDetailScreen(
                     reply,
                     state.userProfiles[reply.creator.substringAfterLast('/')],
                     controller,
-                    onOpen = { onOpen(reply) },
-                    onReact = {}
+                    liked = reply.isLikedBy(state.activeAccount),
+                    onOpen = {},
+                    onReply = { showCommentBox = true },
+                    onReact = { scope.launch { controller.react(reply, "❤️") } },
+                    onOpenImage = { index -> onOpenImage(reply, index) }
                 )
             }
         }
@@ -1471,7 +1594,9 @@ private fun MemoDetailScreen(
                 Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
+                    .graphicsLayer { translationY = commentProgress.value * size.height }
                     .background(InkElevated)
+                    .navigationBarsPadding()
                     .padding(16.dp)
             ) {
                 MarkdownModeToggle(showPreview = showCommentPreview, onPreviewChange = { showCommentPreview = it })
@@ -1540,3 +1665,91 @@ private fun LoadingLine() {
     }
 }
 private fun formatTime(raw: String?): String = raw?.substringAfter('T')?.substringBefore('.')?.removeSuffix("Z")?.take(5).orEmpty()
+
+private data class ImageViewerTarget(val memo: Memo, val startIndex: Int)
+
+private fun Memo.isLikedBy(account: MemosAccount?): Boolean {
+    if (account == null) return false
+    val username = account.username
+    val userId = account.userName.substringAfterLast('/')
+    return reactions.any { reaction ->
+        val creator = reaction.creator.substringAfterLast('/')
+        reaction.reactionType == "❤️" && (creator.equals(username, ignoreCase = true) || creator == userId)
+    }
+}
+
+private fun copyMemoLink(context: Context, url: String) {
+    if (url.isBlank()) return
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    clipboard.setPrimaryClip(ClipData.newPlainText("Memo", url))
+    Toast.makeText(context, "Link copied", Toast.LENGTH_SHORT).show()
+}
+
+private fun shareMemo(context: Context, memo: Memo, url: String) {
+    val snippet = memo.content.trim().take(180)
+    val text = if (snippet.isBlank()) url else "$snippet\n$url"
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_TEXT, text)
+    }
+    context.startActivity(Intent.createChooser(intent, null))
+}
+
+@Composable
+private fun ImageViewer(
+    target: ImageViewerTarget,
+    controller: MemosUiController,
+    backProgress: () -> Float,
+    onClose: () -> Unit
+) {
+    val images = target.memo.attachments.filter { it.isImage }
+    if (images.isEmpty()) return
+    val start = target.startIndex.coerceIn(0, images.lastIndex)
+    val pagerState = rememberPagerState(initialPage = start, pageCount = { images.size })
+    Box(
+        Modifier
+            .fillMaxSize()
+            .graphicsLayer {
+                translationX = backProgress() * size.width
+                alpha = 1f - backProgress() * 0.35f
+            }
+            .background(Color.Black)
+            .pointerInput(Unit) { detectTapGestures { } }
+    ) {
+        HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
+            val attachment = images[page]
+            val bytes by produceState<ByteArray?>(null, attachment.name) {
+                value = controller.attachmentBytes(attachment, thumbnail = false)
+            }
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                if (bytes == null) InfiniteProgressIndicator(color = Accent, size = 28.dp)
+                else AsyncImage(
+                    model = bytes,
+                    contentDescription = attachment.filename,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+        }
+        MiuixIconButton(
+            onClick = onClose,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .statusBarsPadding()
+                .padding(8.dp)
+        ) {
+            MiuixIcon(MiuixIcons.Back, contentDescription = "Close image", tint = Color.White)
+        }
+        if (images.size > 1) {
+            Text(
+                "${pagerState.currentPage + 1} / ${images.size}",
+                color = Color.White.copy(alpha = 0.8f),
+                style = MiuixTheme.textStyles.footnote1,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .statusBarsPadding()
+                    .padding(top = 16.dp)
+            )
+        }
+    }
+}

@@ -212,14 +212,23 @@ private class PreviewMemosController(private val context: Context) : MemosUiCont
     }
 
     override suspend fun react(memo: Memo, reactionType: String) {
-        val reaction = Reaction(name = "${memo.name}/reactions/preview", creator = "users/lin", reactionType = reactionType)
+        val mine = "users/lin"
         _state.update { current ->
+            fun Memo.toggled(): Memo {
+                val existing = reactions.firstOrNull { it.creator == mine && it.reactionType == reactionType }
+                val next = if (existing != null) reactions.filterNot { it.name == existing.name }
+                else reactions + Reaction(name = "${name}/reactions/preview", creator = mine, reactionType = reactionType)
+                return copy(reactions = next)
+            }
             current.copy(
-                timeline = current.timeline.map { if (it.name == memo.name) it.copy(reactions = it.reactions + reaction) else it },
-                selectedMemo = current.selectedMemo?.let { if (it.name == memo.name) it.copy(reactions = it.reactions + reaction) else it }
+                timeline = current.timeline.map { if (it.name == memo.name) it.toggled() else it },
+                selectedMemo = current.selectedMemo?.let { if (it.name == memo.name) it.toggled() else it },
+                selectedComments = current.selectedComments.map { if (it.name == memo.name) it.toggled() else it }
             )
         }
     }
+
+    override fun memoUrl(memo: Memo): String = "https://preview.invalid/m/${memo.uid}"
 
     override fun siteLogoUrl(): String = resourceUri(R.drawable.ic_launcher_foreground)
 

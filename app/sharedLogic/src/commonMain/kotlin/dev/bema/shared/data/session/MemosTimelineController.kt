@@ -5,6 +5,7 @@ import dev.bema.shared.data.model.GeneralSetting
 import dev.bema.shared.data.model.InstanceSetting
 import dev.bema.shared.data.model.Memo
 import dev.bema.shared.data.model.MemoRelatedSetting
+import dev.bema.shared.data.model.Reaction
 import dev.bema.shared.data.model.User
 import dev.bema.shared.data.model.Visibility
 import dev.bema.shared.data.model.WorkspaceSetting
@@ -97,6 +98,7 @@ interface MemosUiController {
     fun closeMemo()
     suspend fun comment(content: String)
     suspend fun react(memo: Memo, reactionType: String)
+    fun memoUrl(memo: Memo): String
     fun siteLogoUrl(): String
     fun accountLogoUrl(account: MemosAccount): String
     suspend fun avatarBytes(user: User): ByteArray?
@@ -412,19 +414,43 @@ class MemosTimelineController(
     }
 
     override suspend fun react(memo: Memo, reactionType: String) {
+        val account = _state.value.activeAccount ?: return
         val session = activeSessionOrNull() ?: return
-        runCatching {
-            val reaction = session.api.upsertReaction(memo.name, reactionType)
-            _state.update { current ->
-                current.copy(
-                    timeline = current.timeline.replaceMemo(memo.name) { it.copy(reactions = it.reactions.withReaction(reaction)) },
-                    selectedMemo = current.selectedMemo?.let { selected ->
-                        if (selected.name == memo.name) selected.copy(reactions = selected.reactions.withReaction(reaction)) else selected
-                    },
-                    error = null
-                )
+        val existing = memo.reactions.firstOrNull { it.reactionType == reactionType && it.isBy(account) }
+        val previous = memo.reactions
+        val optimistic = if (existing != null) {
+            previous.filterNot { it.name == existing.name }
+        } else {
+            previous.filterNot { it.isBy(account) } + Reaction(
+                name = "${memo.name}/reactions/local",
+                creator = account.userName.ifBlank { "users/${account.username}" },
+                reactionType = reactionType
+            )
+        }
+        _state.update { it.withMemoReactions(memo.name, optimistic) }
+        try {
+            if (existing != null) {
+                session.api.deleteReaction(existing.name)
+            } else {
+                val reaction = session.api.upsertReaction(memo.name, reactionType)
+                val current = _state.value.memoNamed(memo.name)?.reactions.orEmpty()
+                _state.update {
+                    it.withMemoReactions(
+                        memo.name,
+                        current.filterNot { reaction -> reaction.name.endsWith("/local") || reaction.isBy(account) } + reaction
+                    )
+                }
             }
-        }.onFailure { error -> _state.update { it.copy(error = error.message ?: "Reaction failed") } }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            _state.update { it.withMemoReactions(memo.name, previous).copy(error = e.message ?: "Reaction failed") }
+        }
+    }
+
+    override fun memoUrl(memo: Memo): String {
+        val account = _state.value.activeAccount ?: return ""
+        return "${account.instanceUrl.trimEnd('/')}/m/${memo.uid}"
     }
 
     fun memoCreator(memo: Memo): User? = _state.value.userProfiles[memo.creator.substringAfterLast('/')]
@@ -596,6 +622,19 @@ private data class StoredAccounts(
 private inline fun List<Memo>.replaceMemo(name: String, transform: (Memo) -> Memo): List<Memo> =
     map { if (it.name == name) transform(it) else it }
 
-private fun List<dev.bema.shared.data.model.Reaction>.withReaction(
-    reaction: dev.bema.shared.data.model.Reaction
-): List<dev.bema.shared.data.model.Reaction> = filterNot { it.creator == reaction.creator } + reaction
+private fun MemosAppState.memoNamed(name: String): Memo? =
+    selectedMemo?.takeIf { it.name == name }
+        ?: selectedComments.firstOrNull { it.name == name }
+        ?: timeline.firstOrNull { it.name == name }
+
+private fun MemosAppState.withMemoReactions(name: String, reactions: List<dev.bema.shared.data.model.Reaction>): MemosAppState =
+    copy(
+        timeline = timeline.replaceMemo(name) { it.copy(reactions = reactions) },
+        selectedMemo = selectedMemo?.let { if (it.name == name) it.copy(reactions = reactions) else it },
+        selectedComments = selectedComments.replaceMemo(name) { it.copy(reactions = reactions) }
+    )
+
+private fun dev.bema.shared.data.model.Reaction.isBy(account: MemosAccount): Boolean {
+    val creator = creator.substringAfterLast('/')
+    return creator.equals(account.username, ignoreCase = true) || creator == account.userName.substringAfterLast('/')
+}
