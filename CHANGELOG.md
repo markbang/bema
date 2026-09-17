@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.0.3](https://github.com/markbang/bema/compare/v0.0.2...v0.0.3) (2026-09-17)
+
+
+### Features
+
+* **android:** add search, instance settings, caching, and predictive back ([b2d84f2](https://github.com/markbang/bema/commit/b2d84f29ab43277cb07be2167b766bd1a1ce6434))
+* **android:** rework account switcher into an actions bottom sheet ([e78f47e](https://github.com/markbang/bema/commit/e78f47ea6af38af10e3ec5c923c42df58b5b2a1a))
+
+
+### Bug Fixes
+
+* **android:** keep account sheet above the gesture bar ([aefdfb1](https://github.com/markbang/bema/commit/aefdfb1d1b164b18ba21a53d09205599644211ca))
+
 ## [0.0.2](https://github.com/markbang/bema/compare/v0.0.1...v0.0.2) (2026-09-17)
 
 
