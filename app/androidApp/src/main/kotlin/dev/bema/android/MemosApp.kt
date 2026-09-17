@@ -207,10 +207,16 @@ private fun TimelineShell(state: MemosAppState, controller: MemosUiController) {
         topBar = {
             TimelineHeader(state, controller) { showAccounts = true }
         },
-        bottomBar = { BottomNav(onAdd = { showComposer = true }) },
+        bottomBar = {
+            if (state.selectedMemo == null) {
+                BottomNav(onAdd = { showComposer = true })
+            }
+        },
         floatingActionButton = {
-            MiuixFloatingActionButton(onClick = { showComposer = true }, containerColor = Accent, shape = CircleShape) {
-                MiuixIcon(MiuixIcons.Add, contentDescription = "New memo", tint = Color.White)
+            if (state.selectedMemo == null) {
+                MiuixFloatingActionButton(onClick = { showComposer = true }, containerColor = Accent, shape = CircleShape) {
+                    MiuixIcon(MiuixIcons.Add, contentDescription = "New memo", tint = Color.White)
+                }
             }
         }
     ) { padding ->
