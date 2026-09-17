@@ -6,8 +6,10 @@ import android.os.Environment
 import android.provider.MediaStore
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.ByteArrayOutputStream
@@ -45,7 +47,7 @@ class UiCatalogScreenshotTest {
         composeRule.onNodeWithText("Cancel").performClick()
         composeRule.waitForIdle()
         Thread.sleep(600)
-        composeRule.onNodeWithText("Lin", substring = true).performClick()
+        composeRule.onNodeWithContentDescription("Switch account").performTouchInput { longClick() }
         composeRule.waitForIdle()
         Thread.sleep(1000)
         capture("04-accounts")

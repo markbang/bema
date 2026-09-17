@@ -5,6 +5,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,6 +24,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import top.yukonga.miuix.kmp.basic.Button as MiuixButton
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.FloatingActionButton as MiuixFloatingActionButton
@@ -70,9 +72,21 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -86,6 +100,8 @@ import dev.bema.shared.data.session.MemosAppState
 import dev.bema.shared.data.session.MemosTimelineController
 import dev.bema.shared.data.session.MemosUiController
 import kotlinx.coroutines.launch
+import kotlin.math.max
+import kotlin.math.min
 
 private val Ink = Color(0xFF050505)
 private val InkElevated = Color(0xFF101010)
@@ -213,12 +229,17 @@ private fun TimelineHeader(state: MemosAppState, controller: MemosUiController, 
         verticalAlignment = Alignment.CenterVertically
     ) {
         val account = state.activeAccount
-        Avatar(
-            account?.avatarUrl, 
-            account?.visibleName ?: "M", 
-            Modifier.size(40.dp).clickable { onAccounts() }, 
-            controller
-        )
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .semantics { contentDescription = "Switch account" }
+                .pointerInput(Unit) {
+                    detectTapGestures(onLongPress = { onAccounts() })
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Avatar(account?.avatarUrl, account?.visibleName ?: "M", Modifier.fillMaxSize(), controller)
+        }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(account?.siteTitle ?: "Memos", color = TextPrimary, fontWeight = FontWeight.Bold, style = MiuixTheme.textStyles.title3)
@@ -284,7 +305,7 @@ private fun MemoTweet(memo: Memo, user: User?, controller: MemosUiController, on
                     Text("· ${formatTime(memo.createTime?.toString())}", color = TextSecondary, maxLines = 1)
                 }
                 Spacer(Modifier.height(5.dp))
-                Text(memo.content, color = TextPrimary, style = MiuixTheme.textStyles.paragraph)
+                MarkdownText(memo.content)
                 if (memo.tags.isNotEmpty()) Text(memo.tags.joinToString("  ") { "#$it" }, color = Accent, modifier = Modifier.padding(top = 8.dp))
                 if (memo.attachments.isNotEmpty()) MediaRail(memo, controller)
                 TweetActions(memo, onReact)
@@ -292,6 +313,114 @@ private fun MemoTweet(memo: Memo, user: User?, controller: MemosUiController, on
         }
     }
     MiuixHorizontalDivider(color = InkLine, thickness = 1.dp)
+}
+
+@Composable
+private fun MarkdownText(markdown: String, modifier: Modifier = Modifier) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        markdown.split('\n').forEach { line ->
+            when {
+                line.isBlank() -> Spacer(Modifier.height(4.dp))
+                line.startsWith("### ") -> Text(
+                    text = markdownInline(line.removePrefix("### ")),
+                    color = TextPrimary,
+                    style = MiuixTheme.textStyles.headline1.copy(fontWeight = FontWeight.Bold)
+                )
+                line.startsWith("## ") -> Text(
+                    text = markdownInline(line.removePrefix("## ")),
+                    color = TextPrimary,
+                    style = MiuixTheme.textStyles.title3.copy(fontWeight = FontWeight.Bold)
+                )
+                line.startsWith("# ") -> Text(
+                    text = markdownInline(line.removePrefix("# ")),
+                    color = TextPrimary,
+                    style = MiuixTheme.textStyles.title2.copy(fontWeight = FontWeight.Bold)
+                )
+                line.startsWith("- ") || line.startsWith("* ") -> Text(
+                    text = markdownInline("• ${line.drop(2)}"),
+                    color = TextPrimary,
+                    style = MiuixTheme.textStyles.paragraph
+                )
+                line.startsWith("> ") -> Text(
+                    text = markdownInline(line.removePrefix("> ")),
+                    color = TextSecondary,
+                    style = MiuixTheme.textStyles.paragraph.copy(fontStyle = FontStyle.Italic)
+                )
+                else -> Text(
+                    text = markdownInline(line),
+                    color = TextPrimary,
+                    style = MiuixTheme.textStyles.paragraph
+                )
+            }
+        }
+    }
+}
+
+private fun markdownInline(input: String): AnnotatedString = buildAnnotatedString {
+    var index = 0
+    while (index < input.length) {
+        when {
+            input.startsWith("**", index) -> {
+                val end = input.indexOf("**", index + 2)
+                if (end > index + 2) {
+                    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+                        append(input.substring(index + 2, end))
+                    }
+                    index = end + 2
+                } else {
+                    append("**")
+                    index += 2
+                }
+            }
+            input[index] == '`' -> {
+                val end = input.indexOf('`', index + 1)
+                if (end > index + 1) {
+                    withStyle(SpanStyle(color = Accent, background = InkElevated)) {
+                        append(input.substring(index + 1, end))
+                    }
+                    index = end + 1
+                } else {
+                    append('`')
+                    index++
+                }
+            }
+            input[index] == '[' -> {
+                val labelEnd = input.indexOf(']', index + 1)
+                val urlStart = labelEnd + 1
+                val urlEnd = if (labelEnd >= 0 && input.getOrNull(urlStart) == '(') {
+                    input.indexOf(')', urlStart + 1)
+                } else {
+                    -1
+                }
+                if (labelEnd > index + 1 && urlEnd > urlStart + 1) {
+                    withStyle(SpanStyle(color = Accent, textDecoration = TextDecoration.Underline)) {
+                        append(input.substring(index + 1, labelEnd))
+                    }
+                    index = urlEnd + 1
+                } else {
+                    append('[')
+                    index++
+                }
+            }
+            input[index] == '*' || input[index] == '_' -> {
+                val marker = input[index]
+                val end = input.indexOf(marker, index + 1)
+                if (end > index + 1) {
+                    withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
+                        append(input.substring(index + 1, end))
+                    }
+                    index = end + 1
+                } else {
+                    append(marker)
+                    index++
+                }
+            }
+            else -> {
+                append(input[index])
+                index++
+            }
+        }
+    }
 }
 
 @Composable
@@ -330,7 +459,8 @@ private fun Action(icon: ImageVector, description: String, count: String, onClic
 
 @Composable
 private fun ComposerDialog(state: MemosAppState, controller: MemosUiController, onDismiss: () -> Unit) {
-    var text by remember { mutableStateOf("") }
+    var editor by remember { mutableStateOf(TextFieldValue()) }
+    var showPreview by remember { mutableStateOf(false) }
     var attachments by remember { mutableStateOf(emptyList<PendingAttachment>()) }
     val scope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -338,7 +468,11 @@ private fun ComposerDialog(state: MemosAppState, controller: MemosUiController, 
         attachments = uris.mapNotNull { uri ->
             runCatching {
                 val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return@runCatching null
-                PendingAttachment(uri.lastPathSegment ?: "image.jpg", bytes, context.contentResolver.getType(uri) ?: "image/jpeg")
+                PendingAttachment(
+                    filename = uri.lastPathSegment ?: "attachment",
+                    content = bytes,
+                    type = context.contentResolver.getType(uri) ?: "application/octet-stream"
+                )
             }.getOrNull()
         }
     }
@@ -349,36 +483,56 @@ private fun ComposerDialog(state: MemosAppState, controller: MemosUiController, 
         onDismissRequest = onDismiss
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            MiuixTextField(
-                value = text,
-                onValueChange = { text = it },
-                label = "Write your memo in Markdown",
-                useLabelAsPlaceholder = true,
-                singleLine = false,
-                minLines = 6,
-                modifier = Modifier.fillMaxWidth().height(180.dp)
-            )
-            
-            MarkdownToolbar { symbol -> 
-                text = when {
-                    text.isEmpty() -> symbol
-                    else -> "$text$symbol"
+            MarkdownModeToggle(showPreview = showPreview, onPreviewChange = { showPreview = it })
+            if (showPreview) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(180.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Color(0xFF4A4A4A))
+                        .padding(16.dp)
+                ) {
+                    if (editor.text.isBlank()) {
+                        Text("Nothing to preview", color = TextSecondary)
+                    } else {
+                        MarkdownText(editor.text)
+                    }
                 }
+            } else {
+                MarkdownEditor(editor, Modifier.height(180.dp)) { editor = it }
+                MarkdownToolbar(editor) { editor = it }
             }
-            
+
             if (attachments.isNotEmpty()) {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(attachments) { attachment ->
                         Box {
-                            AsyncImage(
-                                attachment.content,
-                                attachment.filename,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.size(78.dp).clip(RoundedCornerShape(10.dp))
-                            )
+                            if (attachment.type.startsWith("image/")) {
+                                AsyncImage(
+                                    attachment.content,
+                                    attachment.filename,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.size(78.dp).clip(RoundedCornerShape(10.dp))
+                                )
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .size(78.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(InkLine)
+                                        .padding(8.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(attachment.filename, color = TextPrimary, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
                             MiuixIconButton(
                                 onClick = { attachments = attachments.filter { it != attachment } },
-                                modifier = Modifier.align(Alignment.TopEnd).size(24.dp).background(Color.Black.copy(alpha = 0.6f), CircleShape)
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .size(24.dp)
+                                    .background(Color.Black.copy(alpha = 0.6f), CircleShape)
                             ) {
                                 Text("×", color = Color.White, fontWeight = FontWeight.Bold)
                             }
@@ -386,24 +540,24 @@ private fun ComposerDialog(state: MemosAppState, controller: MemosUiController, 
                     }
                 }
             }
-            
+
             Row(
-                modifier = Modifier.clickable { picker.launch("image/*") }.padding(vertical = 8.dp),
+                modifier = Modifier.clickable { picker.launch("*/*") }.padding(vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                MiuixIcon(MiuixIcons.Photos, contentDescription = "Add photos", tint = Accent)
+                MiuixIcon(MiuixIcons.Photos, contentDescription = "Add attachments", tint = Accent)
                 Spacer(Modifier.width(8.dp))
-                Text("Add photos", color = Accent)
+                Text("Add attachments", color = Accent)
             }
-            
+
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 MiuixTextButton(text = "Cancel", onClick = onDismiss, modifier = Modifier.weight(1f))
                 MiuixTextButton(
                     text = if (state.isPublishing) "Posting" else "Post",
-                    enabled = (text.isNotBlank() || attachments.isNotEmpty()) && !state.isPublishing,
+                    enabled = (editor.text.isNotBlank() || attachments.isNotEmpty()) && !state.isPublishing,
                     onClick = {
                         scope.launch {
-                            controller.publish(text, pendingAttachments = attachments)
+                            controller.publish(editor.text, pendingAttachments = attachments)
                             onDismiss()
                         }
                     },
@@ -416,18 +570,84 @@ private fun ComposerDialog(state: MemosAppState, controller: MemosUiController, 
 }
 
 @Composable
-private fun MarkdownToolbar(onInsert: (String) -> Unit) {
+private fun MarkdownEditor(
+    value: TextFieldValue,
+    modifier: Modifier = Modifier,
+    onValueChange: (TextFieldValue) -> Unit
+) {
+    BasicTextField(
+        value = value,
+        onValueChange = onValueChange,
+        textStyle = MiuixTheme.textStyles.paragraph.copy(color = TextPrimary),
+        cursorBrush = SolidColor(Accent),
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color(0xFF4A4A4A))
+            .padding(16.dp),
+        decorationBox = { innerTextField ->
+            Box {
+                if (value.text.isBlank()) {
+                    Text("Write your memo in Markdown", color = TextSecondary)
+                }
+                innerTextField()
+            }
+        }
+    )
+}
+
+@Composable
+private fun MarkdownModeToggle(showPreview: Boolean, onPreviewChange: (Boolean) -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        MarkdownModeButton("Write", !showPreview) { onPreviewChange(false) }
+        MarkdownModeButton("Preview", showPreview) { onPreviewChange(true) }
+    }
+}
+
+@Composable
+private fun MarkdownModeButton(label: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (selected) Accent else InkLine)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 7.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(label, color = if (selected) Color.White else TextSecondary, fontWeight = FontWeight.Medium)
+    }
+}
+
+@Composable
+private fun MarkdownToolbar(value: TextFieldValue, onValueChange: (TextFieldValue) -> Unit) {
     LazyRow(
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        item { MarkdownButton("B", "Bold") { onInsert("**") } }
-        item { MarkdownButton("I", "Italic") { onInsert("*") } }
-        item { MarkdownButton("</>", "Code") { onInsert("`") } }
-        item { MarkdownButton("🔗", "Link") { onInsert("[]()") } }
-        item { MarkdownButton("#", "Heading") { onInsert("\n## ") } }
-        item { MarkdownButton("-", "List") { onInsert("\n- ") } }
+        item { MarkdownButton("B", "Bold") { onValueChange(insertMarkdown(value, "**")) } }
+        item { MarkdownButton("I", "Italic") { onValueChange(insertMarkdown(value, "*")) } }
+        item { MarkdownButton("</>", "Code") { onValueChange(insertMarkdown(value, "`")) } }
+        item { MarkdownButton("🔗", "Link") { onValueChange(insertMarkdown(value, "[", "]()")) } }
+        item { MarkdownButton("#", "Heading") { onValueChange(insertLinePrefix(value, "## ")) } }
+        item { MarkdownButton("-", "List") { onValueChange(insertLinePrefix(value, "- ")) } }
     }
+}
+
+private fun insertMarkdown(value: TextFieldValue, prefix: String, suffix: String = prefix): TextFieldValue {
+    val start = min(value.selection.start, value.selection.end)
+    val end = max(value.selection.start, value.selection.end)
+    val selected = value.text.substring(start, end)
+    val replacement = prefix + selected + suffix
+    val cursor = if (selected.isEmpty()) start + prefix.length else start + replacement.length
+    return TextFieldValue(value.text.replaceRange(start, end, replacement), TextRange(cursor))
+}
+
+private fun insertLinePrefix(value: TextFieldValue, prefix: String): TextFieldValue {
+    val start = min(value.selection.start, value.selection.end)
+    val lineStart = value.text.lastIndexOf('\n', start - 1) + 1
+    val updated = value.text.substring(0, lineStart) + prefix + value.text.substring(lineStart)
+    val cursor = value.selection.start + prefix.length
+    return TextFieldValue(updated, TextRange(cursor))
 }
 
 @Composable
@@ -435,6 +655,7 @@ private fun MarkdownButton(symbol: String, description: String, onClick: () -> U
     Box(
         modifier = Modifier
             .size(36.dp)
+            .semantics { contentDescription = description }
             .clip(RoundedCornerShape(8.dp))
             .background(InkLine)
             .clickable(onClick = onClick),
@@ -481,7 +702,8 @@ private fun AccountRow(account: MemosAccount, selected: Boolean, controller: Mem
 @Composable
 private fun MemoDetailScreen(state: MemosAppState, controller: MemosUiController, modifier: Modifier) {
     val scope = rememberCoroutineScope()
-    var comment by remember { mutableStateOf("") }
+    var comment by remember { mutableStateOf(TextFieldValue()) }
+    var showCommentPreview by remember { mutableStateOf(false) }
     var showCommentBox by remember { mutableStateOf(false) }
     val memo = state.selectedMemo ?: return
     PredictiveBackHandler { controller.closeMemo() }
@@ -489,7 +711,7 @@ private fun MemoDetailScreen(state: MemosAppState, controller: MemosUiController
     Box(modifier.fillMaxSize()) {
         LazyColumn(
             Modifier.fillMaxSize().background(Ink),
-            contentPadding = PaddingValues(bottom = if (showCommentBox) 200.dp else 28.dp)
+            contentPadding = PaddingValues(bottom = if (showCommentBox) 300.dp else 28.dp)
         ) {
             item {
                 Row(
@@ -533,31 +755,42 @@ private fun MemoDetailScreen(state: MemosAppState, controller: MemosUiController
                     .background(InkElevated)
                     .padding(16.dp)
             ) {
-                MiuixTextField(
-                    value = comment,
-                    onValueChange = { comment = it },
-                    label = "Write a reply in Markdown",
-                    useLabelAsPlaceholder = true,
-                    singleLine = false,
-                    minLines = 3,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                MarkdownModeToggle(showPreview = showCommentPreview, onPreviewChange = { showCommentPreview = it })
+                Spacer(Modifier.height(8.dp))
+                if (showCommentPreview) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(120.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Color(0xFF4A4A4A))
+                            .padding(16.dp)
+                    ) {
+                        if (comment.text.isBlank()) Text("Nothing to preview", color = TextSecondary)
+                        else MarkdownText(comment.text)
+                    }
+                } else {
+                    MarkdownEditor(comment, Modifier.height(120.dp)) { comment = it }
+                    MarkdownToolbar(comment) { comment = it }
+                }
                 Spacer(Modifier.height(12.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     MiuixTextButton(
                         text = "Cancel",
                         onClick = {
-                            comment = ""
+                            comment = TextFieldValue()
+                            showCommentPreview = false
                             showCommentBox = false
                         },
                         modifier = Modifier.weight(1f)
                     )
                     MiuixTextButton(
                         text = "Reply",
-                        enabled = comment.isNotBlank(),
+                        enabled = comment.text.isNotBlank(),
                         onClick = {
-                            val body = comment
-                            comment = ""
+                            val body = comment.text
+                            comment = TextFieldValue()
+                            showCommentPreview = false
                             showCommentBox = false
                             scope.launch { controller.comment(body) }
                         },
