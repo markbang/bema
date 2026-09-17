@@ -64,8 +64,13 @@ import top.yukonga.miuix.kmp.icon.extended.Reply
 import top.yukonga.miuix.kmp.icon.extended.Search
 import top.yukonga.miuix.kmp.icon.extended.Settings
 import top.yukonga.miuix.kmp.icon.extended.Share
+import top.yukonga.miuix.kmp.icon.extended.Delete
+import top.yukonga.miuix.kmp.icon.extended.Pin
+import top.yukonga.miuix.kmp.icon.extended.Rename
+import top.yukonga.miuix.kmp.icon.extended.Unpin
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.darkColorScheme
+import top.yukonga.miuix.kmp.window.WindowBottomSheet
 import top.yukonga.miuix.kmp.window.WindowDialog
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -1124,20 +1129,193 @@ private fun SettingsTextField(label: String, value: String, onValueChange: (Stri
     )
 }
 
+private sealed interface AccountSheetMode {
+    data object List : AccountSheetMode
+    data object Add : AccountSheetMode
+    data class Actions(val account: MemosAccount) : AccountSheetMode
+}
+
 @Composable
 private fun AccountSheet(state: MemosAppState, controller: MemosUiController, onDismiss: () -> Unit) {
-    WindowDialog(
+    var mode by remember { mutableStateOf<AccountSheetMode>(AccountSheetMode.List) }
+    var renaming by remember { mutableStateOf<MemosAccount?>(null) }
+    var confirmingRemove by remember { mutableStateOf<MemosAccount?>(null) }
+    val scope = rememberCoroutineScope()
+    val actionsAccount = (mode as? AccountSheetMode.Actions)?.account
+    WindowBottomSheet(
         show = true,
-        title = "Accounts",
+        title = when (mode) {
+            AccountSheetMode.List -> "Accounts"
+            AccountSheetMode.Add -> "Add account"
+            is AccountSheetMode.Actions -> actionsAccount?.siteTitle ?: "Account"
+        },
         backgroundColor = InkElevated,
-        onDismissRequest = onDismiss
+        onDismissRequest = onDismiss,
+        startAction = if (mode is AccountSheetMode.List) null else {
+            {
+                MiuixIconButton(onClick = { mode = AccountSheetMode.List }) {
+                    MiuixIcon(MiuixIcons.Back, contentDescription = "Back to accounts", tint = TextPrimary)
+                }
+            }
+        },
+        endAction = if (mode is AccountSheetMode.List) {
+            {
+                MiuixIconButton(onClick = { mode = AccountSheetMode.Add }) {
+                    MiuixIcon(MiuixIcons.Add, contentDescription = "Add account", tint = TextPrimary)
+                }
+            }
+        } else null
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            state.accounts.forEach { account -> AccountRow(account, account.id == state.activeAccountId, controller) }
+        when (val current = mode) {
+            AccountSheetMode.List -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                state.orderedAccounts.forEach { account ->
+                    AccountRow(
+                        account = account,
+                        selected = account.id == state.activeAccountId,
+                        controller = controller,
+                        onOpen = {
+                            scope.launch { controller.selectAccount(account.id) }
+                            onDismiss()
+                        },
+                        onActions = { mode = AccountSheetMode.Actions(account) }
+                    )
+                }
+                Text(
+                    "Hold an account to pin, rename, or remove it.",
+                    color = TextSecondary,
+                    style = MiuixTheme.textStyles.footnote1,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                )
+                Spacer(Modifier.height(6.dp))
+                MiuixTextButton(
+                    text = "Done",
+                    onClick = onDismiss,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.textButtonColorsPrimary()
+                )
+            }
+            AccountSheetMode.Add -> AddAccountForm(state, controller) { mode = AccountSheetMode.List }
+            is AccountSheetMode.Actions -> Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                AccountActionRow(
+                    icon = if (current.account.pinned) MiuixIcons.Unpin else MiuixIcons.Pin,
+                    label = if (current.account.pinned) "Unpin" else "Pin to top",
+                    onClick = {
+                        scope.launch { controller.setAccountPinned(current.account.id, !current.account.pinned) }
+                        mode = AccountSheetMode.List
+                    }
+                )
+                AccountActionRow(
+                    icon = MiuixIcons.Rename,
+                    label = "Rename",
+                    onClick = {
+                        renaming = current.account
+                        mode = AccountSheetMode.List
+                    }
+                )
+                AccountActionRow(
+                    icon = MiuixIcons.Delete,
+                    label = "Remove account",
+                    destructive = true,
+                    onClick = {
+                        confirmingRemove = current.account
+                        mode = AccountSheetMode.List
+                    }
+                )
+            }
+        }
+    }
+    renaming?.let { account ->
+        RenameAccountDialog(account, controller) { renaming = null }
+    }
+    confirmingRemove?.let { account ->
+        RemoveAccountDialog(
+            account = account,
+            onCancel = { confirmingRemove = null },
+            onConfirm = {
+                confirmingRemove = null
+                scope.launch { controller.removeAccount(account.id) }
+            }
+        )
+    }
+}
+
+@Composable
+private fun AccountActionRow(
+    icon: ImageVector,
+    label: String,
+    destructive: Boolean = false,
+    onClick: () -> Unit
+) {
+    val color = if (destructive) Color(0xFFFF6B6B) else TextPrimary
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        MiuixIcon(icon, contentDescription = null, tint = color, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(14.dp))
+        Text(label, color = color, fontWeight = FontWeight.Medium)
+    }
+}
+
+@Composable
+private fun AccountRow(
+    account: MemosAccount,
+    selected: Boolean,
+    controller: MemosUiController,
+    onOpen: () -> Unit,
+    onActions: () -> Unit
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .pointerInput(account.id) {
+                detectTapGestures(onTap = { onOpen() }, onLongPress = { onActions() })
+            }
+            .padding(horizontal = 10.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        AccountAvatar(account, account.siteTitle, Modifier.size(42.dp), controller)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(account.siteTitle, color = TextPrimary, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(account.visibleName, color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        if (selected) MiuixIcon(MiuixIcons.Ok, contentDescription = "Selected", tint = Accent)
+    }
+}
+
+@Composable
+private fun AddAccountForm(state: MemosAppState, controller: MemosUiController, onBack: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    var instance by remember { mutableStateOf("") }
+    var username by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var submitting by remember { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("Add another Memos instance to switch between accounts.", color = TextSecondary)
+        DarkField(instance, { instance = it }, "Memos instance", "memos.example.com")
+        DarkField(username, { username = it }, "Username")
+        DarkField(password, { password = it }, "Password", secure = true)
+        state.error?.let { Text(it, color = Color(0xFFFF6B6B)) }
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            MiuixTextButton(text = "Cancel", onClick = onBack, modifier = Modifier.weight(1f), enabled = !submitting)
             MiuixTextButton(
-                text = "Done",
-                onClick = onDismiss,
-                modifier = Modifier.fillMaxWidth(),
+                text = if (submitting) "Signing in" else "Add",
+                enabled = instance.isNotBlank() && username.isNotBlank() && password.isNotBlank() && !submitting,
+                onClick = {
+                    submitting = true
+                    scope.launch {
+                        controller.addAccount(instance, username, password)
+                        submitting = false
+                        if (controller.state.value.error == null) onBack()
+                    }
+                },
+                modifier = Modifier.weight(1f),
                 colors = ButtonDefaults.textButtonColorsPrimary()
             )
         }
@@ -1145,16 +1323,64 @@ private fun AccountSheet(state: MemosAppState, controller: MemosUiController, on
 }
 
 @Composable
-private fun AccountRow(account: MemosAccount, selected: Boolean, controller: MemosUiController) {
+private fun RenameAccountDialog(account: MemosAccount, controller: MemosUiController, onDismiss: () -> Unit) {
     val scope = rememberCoroutineScope()
-    Row(Modifier.fillMaxWidth().clickable { scope.launch { controller.selectAccount(account.id) } }, verticalAlignment = Alignment.CenterVertically) {
-        AccountAvatar(account, account.siteTitle, Modifier.size(38.dp), controller)
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text(account.siteTitle, color = TextPrimary, fontWeight = FontWeight.SemiBold)
-            Text(account.visibleName, color = TextSecondary)
+    var name by remember(account.id) { mutableStateOf(account.visibleName) }
+    WindowDialog(
+        show = true,
+        title = "Rename account",
+        backgroundColor = InkElevated,
+        onDismissRequest = onDismiss
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Text(
+                account.instanceUrl,
+                color = TextSecondary,
+                style = MiuixTheme.textStyles.footnote1,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            SettingsTextField("Display name", name) { name = it }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                MiuixTextButton(text = "Cancel", onClick = onDismiss, modifier = Modifier.weight(1f))
+                MiuixTextButton(
+                    text = "Save",
+                    enabled = name.isNotBlank(),
+                    onClick = {
+                        scope.launch { controller.renameAccount(account.id, name) }
+                        onDismiss()
+                    },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.textButtonColorsPrimary()
+                )
+            }
         }
-        if (selected) MiuixIcon(MiuixIcons.Ok, contentDescription = "Selected", tint = Accent)
+    }
+}
+
+@Composable
+private fun RemoveAccountDialog(account: MemosAccount, onCancel: () -> Unit, onConfirm: () -> Unit) {
+    WindowDialog(
+        show = true,
+        title = "Remove account?",
+        backgroundColor = InkElevated,
+        onDismissRequest = onCancel
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Text(
+                "${account.siteTitle} · ${account.visibleName} will be removed from this device. Memos stored on the server are not deleted.",
+                color = TextSecondary
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                MiuixTextButton(text = "Cancel", onClick = onCancel, modifier = Modifier.weight(1f))
+                MiuixTextButton(
+                    text = "Remove",
+                    onClick = onConfirm,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.textButtonColorsPrimary()
+                )
+            }
+        }
     }
 }
 

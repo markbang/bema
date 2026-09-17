@@ -122,6 +122,28 @@ private class PreviewMemosController(private val context: Context) : MemosUiCont
         _state.update { it.copy(activeAccountId = accountId) }
     }
 
+    override suspend fun renameAccount(accountId: String, displayName: String) {
+        _state.update { current ->
+            current.copy(accounts = current.accounts.map { if (it.id == accountId) it.copy(displayName = displayName) else it })
+        }
+    }
+
+    override suspend fun setAccountPinned(accountId: String, pinned: Boolean) {
+        _state.update { current ->
+            current.copy(accounts = current.accounts.map { if (it.id == accountId) it.copy(pinned = pinned) else it })
+        }
+    }
+
+    override suspend fun removeAccount(accountId: String) {
+        _state.update { current ->
+            val accounts = current.accounts.filterNot { it.id == accountId }
+            current.copy(
+                accounts = accounts,
+                activeAccountId = if (current.activeAccountId == accountId) accounts.firstOrNull()?.id.orEmpty() else current.activeAccountId
+            )
+        }
+    }
+
     override suspend fun refreshTimeline(filter: String) = Unit
 
     override suspend fun revalidateTimeline() = Unit

@@ -42,6 +42,8 @@ data class MemosAccount(
     val avatarUrl: String = "",
     val siteTitle: String = "Memos",
     val siteLogoUrl: String = "",
+    // Pinned accounts sort to the top of the account switcher.
+    val pinned: Boolean = false,
     val lastSignedInAt: Instant? = null
 ) {
     val visibleName: String get() = displayName.ifBlank { username }
@@ -63,6 +65,7 @@ data class MemosAppState(
     val hasNewerMemos: Boolean = false
 ) {
     val activeAccount: MemosAccount? get() = accounts.firstOrNull { it.id == activeAccountId }
+    val orderedAccounts: List<MemosAccount> get() = accounts.sortedByDescending { it.pinned }
     val canLoadMore: Boolean get() = nextPageToken.isNotBlank() && !isLoadingMore
 }
 
@@ -71,6 +74,9 @@ interface MemosUiController {
 
     suspend fun addAccount(instanceUrl: String, username: String, password: String)
     suspend fun selectAccount(accountId: String)
+    suspend fun renameAccount(accountId: String, displayName: String)
+    suspend fun setAccountPinned(accountId: String, pinned: Boolean)
+    suspend fun removeAccount(accountId: String)
     suspend fun refreshTimeline(filter: String = "")
     // Silent check for newer memos; shows a banner instead of jumping the visible list.
     suspend fun revalidateTimeline()
@@ -174,7 +180,26 @@ class MemosTimelineController(
         refreshTimeline("")
     }
 
-    suspend fun removeAccount(accountId: String) {
+    override suspend fun renameAccount(accountId: String, displayName: String) {
+        val trimmed = displayName.trim()
+        _state.update { current ->
+            current.copy(
+                accounts = current.accounts.map { if (it.id == accountId) it.copy(displayName = trimmed) else it }
+            )
+        }
+        persistAccounts()
+    }
+
+    override suspend fun setAccountPinned(accountId: String, pinned: Boolean) {
+        _state.update { current ->
+            current.copy(
+                accounts = current.accounts.map { if (it.id == accountId) it.copy(pinned = pinned) else it }
+            )
+        }
+        persistAccounts()
+    }
+
+    override suspend fun removeAccount(accountId: String) {
         sessions.remove(accountId)?.clearCookies()
         _state.update { current ->
             val accounts = current.accounts.filterNot { it.id == accountId }
