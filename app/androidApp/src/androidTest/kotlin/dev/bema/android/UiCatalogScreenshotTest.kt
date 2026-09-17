@@ -7,10 +7,12 @@ import android.provider.MediaStore
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.longClick
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -51,7 +53,14 @@ class UiCatalogScreenshotTest {
         capture("04-search-empty")
         textField().performClick()
         textField().performTextInput("时间线")
-        settle(1600)
+        // Best effort: capture whatever the search settled on if it is slow on the emulator.
+        runCatching {
+            composeRule.waitUntil(timeoutMillis = 10_000) {
+                composeRule.onAllNodesWithText("result", substring = true).fetchSemanticsNodes().isNotEmpty()
+            }
+        }
+        runCatching { textField().performImeAction() }
+        settle(800)
         capture("05-search-results")
         composeRule.onNodeWithContentDescription("Timeline").performClick()
         settle()
