@@ -213,16 +213,16 @@ private fun TimelineHeader(state: MemosAppState, controller: MemosUiController, 
         verticalAlignment = Alignment.CenterVertically
     ) {
         val account = state.activeAccount
-        Avatar(account?.avatarUrl, account?.visibleName ?: "M", Modifier.size(36.dp), controller)
-        Spacer(Modifier.width(10.dp))
-        Avatar(controller.siteLogoUrl().ifBlank { null }, account?.siteTitle ?: "M", Modifier.size(24.dp), controller)
-        Spacer(Modifier.width(10.dp))
+        Avatar(
+            account?.avatarUrl, 
+            account?.visibleName ?: "M", 
+            Modifier.size(40.dp).clickable { onAccounts() }, 
+            controller
+        )
+        Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text("For you", color = TextPrimary, fontWeight = FontWeight.Bold, style = MiuixTheme.textStyles.title3)
-            Text(account?.siteTitle ?: "Memos", color = TextSecondary, style = MiuixTheme.textStyles.footnote1)
-        }
-        MiuixIconButton(onClick = onAccounts) {
-            MiuixIcon(MiuixIcons.ExpandMore, contentDescription = "Switch account", tint = TextPrimary)
+            Text(account?.siteTitle ?: "Memos", color = TextPrimary, fontWeight = FontWeight.Bold, style = MiuixTheme.textStyles.title3)
+            Text(account?.visibleName ?: "@${account?.username ?: "user"}", color = TextSecondary, style = MiuixTheme.textStyles.footnote1)
         }
         MiuixIconButton(onClick = { scope.launch { controller.refreshTimeline() } }) {
             MiuixIcon(MiuixIcons.Refresh, contentDescription = "Refresh", tint = TextPrimary)
@@ -237,11 +237,9 @@ private fun BottomNav(onAdd: () -> Unit) {
         showDivider = true,
         mode = NavigationBarDisplayMode.IconOnly
     ) {
-        MiuixNavigationBarItem(selected = true, onClick = {}, icon = MiuixIcons.Home, label = "Home")
+        MiuixNavigationBarItem(selected = true, onClick = {}, icon = MiuixIcons.Home, label = "Timeline")
         MiuixNavigationBarItem(selected = false, onClick = {}, icon = MiuixIcons.Search, label = "Search")
         MiuixNavigationBarItem(selected = false, onClick = onAdd, icon = MiuixIcons.Notes, label = "Compose")
-        MiuixNavigationBarItem(selected = false, onClick = {}, icon = MiuixIcons.Messages, label = "Notifications")
-        MiuixNavigationBarItem(selected = false, onClick = {}, icon = MiuixIcons.Favorites, label = "Favorites")
     }
 }
 
@@ -351,19 +349,44 @@ private fun ComposerDialog(state: MemosAppState, controller: MemosUiController, 
         onDismissRequest = onDismiss
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            DarkField(text, { text = it }, "Say something", secure = false)
+            MiuixTextField(
+                value = text,
+                onValueChange = { text = it },
+                label = "Write your memo in Markdown",
+                useLabelAsPlaceholder = true,
+                singleLine = false,
+                minLines = 6,
+                modifier = Modifier.fillMaxWidth().height(180.dp)
+            )
+            
+            MarkdownToolbar { symbol -> 
+                text = when {
+                    text.isEmpty() -> symbol
+                    else -> "$text$symbol"
+                }
+            }
+            
             if (attachments.isNotEmpty()) {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(attachments) { attachment ->
-                        AsyncImage(
-                            attachment.content,
-                            attachment.filename,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.size(78.dp).clip(RoundedCornerShape(10.dp))
-                        )
+                        Box {
+                            AsyncImage(
+                                attachment.content,
+                                attachment.filename,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.size(78.dp).clip(RoundedCornerShape(10.dp))
+                            )
+                            MiuixIconButton(
+                                onClick = { attachments = attachments.filter { it != attachment } },
+                                modifier = Modifier.align(Alignment.TopEnd).size(24.dp).background(Color.Black.copy(alpha = 0.6f), CircleShape)
+                            ) {
+                                Text("×", color = Color.White, fontWeight = FontWeight.Bold)
+                            }
+                        }
                     }
                 }
             }
+            
             Row(
                 modifier = Modifier.clickable { picker.launch("image/*") }.padding(vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -372,6 +395,7 @@ private fun ComposerDialog(state: MemosAppState, controller: MemosUiController, 
                 Spacer(Modifier.width(8.dp))
                 Text("Add photos", color = Accent)
             }
+            
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 MiuixTextButton(text = "Cancel", onClick = onDismiss, modifier = Modifier.weight(1f))
                 MiuixTextButton(
@@ -388,6 +412,35 @@ private fun ComposerDialog(state: MemosAppState, controller: MemosUiController, 
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun MarkdownToolbar(onInsert: (String) -> Unit) {
+    LazyRow(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        item { MarkdownButton("B", "Bold") { onInsert("**") } }
+        item { MarkdownButton("I", "Italic") { onInsert("*") } }
+        item { MarkdownButton("</>", "Code") { onInsert("`") } }
+        item { MarkdownButton("🔗", "Link") { onInsert("[]()") } }
+        item { MarkdownButton("#", "Heading") { onInsert("\n## ") } }
+        item { MarkdownButton("-", "List") { onInsert("\n- ") } }
+    }
+}
+
+@Composable
+private fun MarkdownButton(symbol: String, description: String, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(36.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(InkLine)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(symbol, color = TextSecondary, fontWeight = FontWeight.Medium)
     }
 }
 
@@ -429,39 +482,101 @@ private fun AccountRow(account: MemosAccount, selected: Boolean, controller: Mem
 private fun MemoDetailScreen(state: MemosAppState, controller: MemosUiController, modifier: Modifier) {
     val scope = rememberCoroutineScope()
     var comment by remember { mutableStateOf("") }
+    var showCommentBox by remember { mutableStateOf(false) }
     val memo = state.selectedMemo ?: return
     PredictiveBackHandler { controller.closeMemo() }
-    LazyColumn(modifier.fillMaxSize().background(Ink), contentPadding = PaddingValues(bottom = 28.dp)) {
-        item {
-            Row(
-                modifier = Modifier.clickable { controller.closeMemo() }.padding(18.dp),
-                verticalAlignment = Alignment.CenterVertically
+    
+    Box(modifier.fillMaxSize()) {
+        LazyColumn(
+            Modifier.fillMaxSize().background(Ink),
+            contentPadding = PaddingValues(bottom = if (showCommentBox) 200.dp else 28.dp)
+        ) {
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Ink)
+                        .padding(horizontal = 18.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    MiuixIconButton(onClick = { controller.closeMemo() }) {
+                        MiuixIcon(MiuixIcons.Back, contentDescription = "Back", tint = TextPrimary)
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Text("Memo", color = TextPrimary, fontWeight = FontWeight.Bold, style = MiuixTheme.textStyles.title3)
+                }
+            }
+            
+            item { MemoTweet(memo, state.userProfiles[memo.creator.substringAfterLast('/')], controller) { scope.launch { controller.react(memo, it) } } }
+            
+            if (state.selectedComments.isNotEmpty()) {
+                item {
+                    Text(
+                        "${state.selectedComments.size} ${if (state.selectedComments.size == 1) "reply" else "replies"}",
+                        color = TextSecondary,
+                        style = MiuixTheme.textStyles.footnote1,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+                    )
+                }
+            }
+            
+            items(state.selectedComments, key = { it.name }) { reply ->
+                MemoTweet(reply, state.userProfiles[reply.creator.substringAfterLast('/')], controller) { }
+            }
+        }
+        
+        if (showCommentBox) {
+            Column(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .background(InkElevated)
+                    .padding(16.dp)
             ) {
-                MiuixIcon(MiuixIcons.Back, contentDescription = "Back", tint = Accent)
-                Spacer(Modifier.width(8.dp))
-                Text("Back", color = Accent)
-            }
-        }
-        item { MemoTweet(memo, state.userProfiles[memo.creator.substringAfterLast('/')], controller) { scope.launch { controller.react(memo, it) } } }
-        item {
-            Column(Modifier.padding(16.dp)) {
-                Text("Replies", color = TextPrimary, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(10.dp))
-                DarkField(comment, { comment = it }, "Write a reply")
-                MiuixTextButton(
-                    text = "Reply",
-                    enabled = comment.isNotBlank(),
-                    onClick = {
-                        val body = comment
-                        comment = ""
-                        scope.launch { controller.comment(body) }
-                    },
-                    colors = ButtonDefaults.textButtonColorsPrimary()
+                MiuixTextField(
+                    value = comment,
+                    onValueChange = { comment = it },
+                    label = "Write a reply in Markdown",
+                    useLabelAsPlaceholder = true,
+                    singleLine = false,
+                    minLines = 3,
+                    modifier = Modifier.fillMaxWidth()
                 )
+                Spacer(Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    MiuixTextButton(
+                        text = "Cancel",
+                        onClick = {
+                            comment = ""
+                            showCommentBox = false
+                        },
+                        modifier = Modifier.weight(1f)
+                    )
+                    MiuixTextButton(
+                        text = "Reply",
+                        enabled = comment.isNotBlank(),
+                        onClick = {
+                            val body = comment
+                            comment = ""
+                            showCommentBox = false
+                            scope.launch { controller.comment(body) }
+                        },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.textButtonColorsPrimary()
+                    )
+                }
             }
         }
-        items(state.selectedComments, key = { it.name }) { reply ->
-            MemoTweet(reply, state.userProfiles[reply.creator.substringAfterLast('/')], controller) { }
+        
+        if (!showCommentBox) {
+            MiuixFloatingActionButton(
+                onClick = { showCommentBox = true },
+                containerColor = Accent,
+                shape = CircleShape,
+                modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp)
+            ) {
+                MiuixIcon(MiuixIcons.Reply, contentDescription = "Reply", tint = Color.White)
+            }
         }
     }
 }
