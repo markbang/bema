@@ -34,7 +34,7 @@ class UiCatalogScreenshotTest {
         capture("02-detail")
 
         composeRule.onNodeWithContentDescription("Back").performClick()
-        composeRule.onNodeWithContentDescription("Compose").performClick()
+        composeRule.onNodeWithContentDescription("New memo").performClick()
         composeRule.onNodeWithText("New memo").assertIsDisplayed()
         capture("03-composer")
 
