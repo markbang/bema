@@ -95,8 +95,15 @@ jobs:
             > build/ui-preview/build-info.txt
           test -f build/ui-preview/01-timeline.png
           test -f build/ui-preview/02-detail.png
-          test -f build/ui-preview/03-composer.png
-          test -f build/ui-preview/04-accounts.png
+          test -f build/ui-preview/03-comment-composer.png
+          test -f build/ui-preview/04-search-empty.png
+          test -f build/ui-preview/05-search-results.png
+          test -f build/ui-preview/06-composer.png
+          test -f build/ui-preview/07-composer-preview.png
+          test -f build/ui-preview/08-accounts.png
+          test -f build/ui-preview/09-account-actions.png
+          test -f build/ui-preview/10-add-account.png
+          test -f build/ui-preview/11-settings.png
 
       - name: Upload UI preview
         uses: actions/upload-artifact@v7

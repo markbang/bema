@@ -358,7 +358,7 @@ private fun TimelineHeader(
             Text(account?.visibleName ?: "@${account?.username ?: "user"}", color = TextSecondary, style = MiuixTheme.textStyles.footnote1)
         }
         MiuixIconButton(onClick = onSearch) {
-            MiuixIcon(MiuixIcons.Search, contentDescription = "Search", tint = TextPrimary)
+            MiuixIcon(MiuixIcons.Search, contentDescription = "Open search", tint = TextPrimary)
         }
         MiuixIconButton(onClick = { scope.launch { controller.refreshTimeline() } }) {
             MiuixIcon(MiuixIcons.Refresh, contentDescription = "Refresh", tint = TextPrimary)
@@ -1516,7 +1516,7 @@ private fun MemoDetailScreen(
                 shape = CircleShape,
                 modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp)
             ) {
-                MiuixIcon(MiuixIcons.Reply, contentDescription = "Reply", tint = Color.White)
+                MiuixIcon(MiuixIcons.Reply, contentDescription = "Write a reply", tint = Color.White)
             }
         }
     }

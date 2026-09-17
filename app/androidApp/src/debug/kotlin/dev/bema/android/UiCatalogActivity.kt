@@ -5,6 +5,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import dev.bema.shared.data.model.Attachment
+import dev.bema.shared.data.model.CustomProfile
 import dev.bema.shared.data.model.GeneralSetting
 import dev.bema.shared.data.model.InstanceSetting
 import dev.bema.shared.data.model.Memo
@@ -153,7 +154,23 @@ private class PreviewMemosController(private val context: Context) : MemosUiCont
     override suspend fun search(query: String): List<Memo> =
         _state.value.timeline.filter { it.content.contains(query, ignoreCase = true) }
 
-    override suspend fun loadInstanceSettings(): InstanceSetting = InstanceSetting(name = "instanceSettings/GENERAL")
+    override suspend fun loadInstanceSettings(): InstanceSetting = InstanceSetting(
+        name = "instanceSettings/GENERAL",
+        generalSetting = GeneralSetting(
+            customProfile = CustomProfile(
+                title = "Bema Notes",
+                description = "自己的数据，自己的实例",
+                locale = "zh-CN",
+                appearance = "dark"
+            ),
+            disallowUserRegistration = true
+        ),
+        memoRelatedSetting = MemoRelatedSetting(enableLinkMetadata = true),
+        workspaceSetting = WorkspaceSetting(
+            announcement = "欢迎来到 Bema Notes。",
+            maxUploadSizeMiB = 32
+        )
+    )
 
     override suspend fun saveInstanceSettings(
         general: GeneralSetting,

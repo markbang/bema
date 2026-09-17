@@ -5,10 +5,13 @@ import android.graphics.Bitmap
 import android.os.Environment
 import android.provider.MediaStore
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
-import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.longClick
+import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -27,31 +30,72 @@ class UiCatalogScreenshotTest {
 
     @Test
     fun captureCatalogStates() {
-        Thread.sleep(1500)
-        composeRule.waitForIdle()
+        settle(1500)
         capture("01-timeline")
 
         composeRule.onNodeWithText("修了一晚上", substring = true).performClick()
-        composeRule.waitForIdle()
-        Thread.sleep(1000)
+        settle(1000)
         capture("02-detail")
 
-        composeRule.onNodeWithContentDescription("Back").performClick()
-        composeRule.waitForIdle()
-        Thread.sleep(600)
-        composeRule.onNodeWithContentDescription("New memo").performClick()
-        composeRule.waitForIdle()
-        Thread.sleep(1000)
-        capture("03-composer")
-
+        composeRule.onNodeWithContentDescription("Write a reply").performClick()
+        settle(800)
+        capture("03-comment-composer")
         composeRule.onNodeWithText("Cancel").performClick()
-        composeRule.waitForIdle()
-        Thread.sleep(600)
+        settle()
+
+        composeRule.onNodeWithContentDescription("Back").performClick()
+        settle()
+
+        composeRule.onNodeWithContentDescription("Open search").performClick()
+        settle(800)
+        capture("04-search-empty")
+        textField().performClick()
+        textField().performTextInput("时间线")
+        settle(1600)
+        capture("05-search-results")
+        composeRule.onNodeWithContentDescription("Timeline").performClick()
+        settle()
+
+        composeRule.onNodeWithContentDescription("New memo").performClick()
+        settle(900)
+        capture("06-composer")
+        textField().performClick()
+        textField().performTextInput("Hello **Bema**\n\n- 新的一条备忘\n\n`inline code`")
+        settle()
+        composeRule.onNodeWithText("Preview").performClick()
+        settle(800)
+        capture("07-composer-preview")
+        composeRule.onNodeWithText("Cancel").performClick()
+        settle()
+
         composeRule.onNodeWithContentDescription("Switch account").performTouchInput { longClick() }
-        composeRule.waitForIdle()
-        Thread.sleep(1000)
-        capture("04-accounts")
+        settle(1000)
+        capture("08-accounts")
+        composeRule.onNodeWithText("Daily Memos").performTouchInput { longClick() }
+        settle(800)
+        capture("09-account-actions")
+        composeRule.onNodeWithContentDescription("Back to accounts").performClick()
+        settle()
+        composeRule.onNodeWithContentDescription("Add account").performClick()
+        settle(700)
+        capture("10-add-account")
+        composeRule.onNodeWithContentDescription("Back to accounts").performClick()
+        settle()
+        composeRule.onNodeWithText("Done").performClick()
+        settle()
+
+        composeRule.onNodeWithContentDescription("Settings").performClick()
+        settle(1400)
+        capture("11-settings")
     }
+
+    private fun settle(millis: Long = 600) {
+        composeRule.waitForIdle()
+        Thread.sleep(millis)
+    }
+
+    private fun textField() =
+        composeRule.onAllNodes(hasSetTextAction()).onFirst()
 
     private fun capture(name: String) {
         composeRule.waitForIdle()

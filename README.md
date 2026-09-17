@@ -35,7 +35,7 @@ The [`UI Preview`](./.github/workflows/ui-preview.yml) workflow runs the real Co
 Android emulator. Trigger it from GitHub Actions or push a UI-related change, then download the
 `bema-ui-preview-<commit>` artifact. It contains:
 
-- `index.html` and four emulator screenshots for the timeline, memo detail, composer, and account switcher;
+- `index.html` and a gallery of emulator screenshots: timeline, memo detail, reply composer, search (empty + results), memo composer (write + preview), the account switcher, account actions, add account, and instance settings;
 - `Bema-UI-Preview.apk`, a debug build with a second launcher named **Bema UI Preview** for interactive review;
 - `build-info.txt` with the source commit and workflow run ID.
 
