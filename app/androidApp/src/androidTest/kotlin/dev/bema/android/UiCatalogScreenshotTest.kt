@@ -26,20 +26,20 @@ class UiCatalogScreenshotTest {
 
     @Test
     fun captureCatalogStates() {
-        composeRule.onNodeWithText("For you").assertIsDisplayed()
+        composeRule.onNodeWithText("Bema Notes").assertIsDisplayed()
         capture("01-timeline")
 
         composeRule.onNodeWithText("修了一晚上", substring = true).performClick()
-        composeRule.onNodeWithText("Replies").assertIsDisplayed()
+        composeRule.onNodeWithText("Memo").assertIsDisplayed()
         capture("02-detail")
 
         composeRule.onNodeWithContentDescription("Back").performClick()
-        composeRule.onNodeWithContentDescription("New memo").performClick()
+        composeRule.onNodeWithContentDescription("Compose").performClick()
         composeRule.onNodeWithText("New memo").assertIsDisplayed()
         capture("03-composer")
 
         composeRule.onNodeWithText("Cancel").performClick()
-        composeRule.onNodeWithContentDescription("Switch account").performClick()
+        composeRule.onNodeWithText("Lin", substring = true).performClick()
         composeRule.onNodeWithText("Accounts").assertIsDisplayed()
         capture("04-accounts")
     }
