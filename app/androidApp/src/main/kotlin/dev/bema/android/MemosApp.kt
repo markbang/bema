@@ -139,11 +139,23 @@ import dev.bema.shared.data.model.MemoRelatedSetting
 import dev.bema.shared.data.model.User
 import dev.bema.shared.data.model.Visibility
 import dev.bema.shared.data.model.WorkspaceSetting
+import dev.bema.shared.data.session.AppearanceOptions
+import dev.bema.shared.data.session.SettingOption
+import dev.bema.shared.data.session.appearanceLabel
+import dev.bema.shared.data.session.canonicalAppearance
+import dev.bema.shared.data.session.canonicalLocale
+import dev.bema.shared.data.session.localeLabel
+import dev.bema.shared.data.session.localeOptionsFor
+import dev.bema.shared.data.session.uploadSizeLabel
+import dev.bema.shared.data.session.uploadSizeOptionsFor
+import dev.bema.shared.data.session.HEART_REACTION
 import dev.bema.shared.data.session.MemosAccount
 import dev.bema.shared.data.session.PendingAttachment
 import dev.bema.shared.data.session.MemosAppState
 import dev.bema.shared.data.session.MemosTimelineController
 import dev.bema.shared.data.session.MemosUiController
+import dev.bema.shared.data.session.formatMemoTime
+import dev.bema.shared.data.session.isLikedBy
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlin.math.max
@@ -608,7 +620,7 @@ private fun TimelineScreen(
                 liked = memo.isLikedBy(state.activeAccount),
                 onOpen = { onOpen(memo) },
                 onReply = { onReply(memo) },
-                onReact = { scope.launch { controller.react(memo, "❤️") } },
+                onReact = { scope.launch { controller.react(memo, HEART_REACTION) } },
                 onOpenImage = { index -> onOpenImage(memo, index) }
             )
         }
@@ -701,7 +713,7 @@ private fun SearchScreen(
                             liked = memo.isLikedBy(state.activeAccount),
                             onOpen = { onOpen(memo) },
                             onReply = { onOpen(memo) },
-                            onReact = { scope.launch { controller.react(memo, "❤️") } },
+                            onReact = { scope.launch { controller.react(memo, HEART_REACTION) } },
                             onOpenImage = { index -> onOpenImage(memo, index) }
                         )
                     }
@@ -735,7 +747,7 @@ private fun MemoTweet(
                         Spacer(Modifier.width(6.dp))
                         Text("@${user?.username ?: memo.creator.substringAfterLast('/')}", color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Spacer(Modifier.width(6.dp))
-                        Text("· ${formatTime(memo.createTime?.toString())}", color = TextSecondary, maxLines = 1)
+                        Text("· ${formatMemoTime(memo.createTime)}", color = TextSecondary, maxLines = 1)
                     }
                     Spacer(Modifier.height(5.dp))
                     MarkdownText(memo.content)
@@ -1778,7 +1790,7 @@ private fun MemoDetailScreen(
                     liked = memo.isLikedBy(state.activeAccount),
                     onOpen = {},
                     onReply = { showCommentBox = true },
-                    onReact = { scope.launch { controller.react(memo, "❤️") } },
+                    onReact = { scope.launch { controller.react(memo, HEART_REACTION) } },
                     onOpenImage = { index -> onOpenImage(memo, index) }
                 )
             }
@@ -1802,7 +1814,7 @@ private fun MemoDetailScreen(
                     liked = reply.isLikedBy(state.activeAccount),
                     onOpen = {},
                     onReply = { showCommentBox = true },
-                    onReact = { scope.launch { controller.react(reply, "❤️") } },
+                    onReact = { scope.launch { controller.react(reply, HEART_REACTION) } },
                     onOpenImage = { index -> onOpenImage(reply, index) }
                 )
             }
@@ -1895,100 +1907,8 @@ private fun LoadingLine() {
         InfiniteProgressIndicator(color = Accent, size = 26.dp)
     }
 }
-private fun formatTime(raw: String?): String = raw?.substringAfter('T')?.substringBefore('.')?.removeSuffix("Z")?.take(5).orEmpty()
-
-private data class SettingOption(val value: String, val label: String)
-
-private val LocaleOptions = listOf(
-    SettingOption("en", "English"),
-    SettingOption("zh-Hans", "简体中文"),
-    SettingOption("zh-Hant", "繁體中文"),
-    SettingOption("ja", "日本語"),
-    SettingOption("ko", "한국어"),
-    SettingOption("fr", "Français"),
-    SettingOption("de", "Deutsch"),
-    SettingOption("es", "Español"),
-    SettingOption("ru", "Русский"),
-    SettingOption("pt-BR", "Português (Brasil)"),
-    SettingOption("pt-PT", "Português"),
-    SettingOption("vi", "Tiếng Việt"),
-    SettingOption("ar", "العربية"),
-    SettingOption("th", "ไทย"),
-    SettingOption("id", "Bahasa Indonesia"),
-    SettingOption("it", "Italiano"),
-    SettingOption("nl", "Nederlands"),
-    SettingOption("pl", "Polski"),
-    SettingOption("tr", "Türkçe"),
-    SettingOption("uk", "Українська")
-)
-
-private val AppearanceOptions = listOf(
-    SettingOption("system", "System"),
-    SettingOption("light", "Light"),
-    SettingOption("dark", "Dark")
-)
-
-private val UploadSizeOptions = listOf(
-    SettingOption("0", "Unlimited"),
-    SettingOption("8", "8 MiB"),
-    SettingOption("16", "16 MiB"),
-    SettingOption("32", "32 MiB"),
-    SettingOption("64", "64 MiB"),
-    SettingOption("128", "128 MiB"),
-    SettingOption("256", "256 MiB")
-)
-
-private fun canonicalLocale(raw: String): String {
-    val value = raw.trim()
-    return when {
-        value.isEmpty() -> "en"
-        value.equals("zh", true) || value.startsWith("zh-CN", true) || value.startsWith("zh-Hans", true) || value.equals("zh-SG", true) -> "zh-Hans"
-        value.startsWith("zh-TW", true) || value.startsWith("zh-HK", true) || value.startsWith("zh-Hant", true) -> "zh-Hant"
-        value.startsWith("en", true) -> "en"
-        value.startsWith("ja", true) -> "ja"
-        value.startsWith("ko", true) -> "ko"
-        value.equals("pt-PT", true) -> "pt-PT"
-        value.startsWith("pt", true) -> "pt-BR"
-        else -> LocaleOptions.firstOrNull { it.value.equals(value, true) }?.value ?: value
-    }
-}
-
-private fun canonicalAppearance(raw: String): String = when (raw.trim().lowercase()) {
-    "light" -> "light"
-    "dark" -> "dark"
-    else -> "system"
-}
-
-private fun localeLabel(value: String): String =
-    LocaleOptions.firstOrNull { it.value == value }?.label ?: value.ifBlank { "English" }
-
-private fun appearanceLabel(value: String): String =
-    AppearanceOptions.firstOrNull { it.value == value }?.label ?: "System"
-
-private fun uploadSizeLabel(value: String): String =
-    UploadSizeOptions.firstOrNull { it.value == value }?.label
-        ?: value.toLongOrNull()?.let { "$it MiB" }
-        ?: "Unlimited"
-
-private fun localeOptionsFor(current: String): List<SettingOption> =
-    if (LocaleOptions.any { it.value == current }) LocaleOptions
-    else listOf(SettingOption(current, current)) + LocaleOptions
-
-private fun uploadSizeOptionsFor(current: String): List<SettingOption> =
-    if (UploadSizeOptions.any { it.value == current }) UploadSizeOptions
-    else listOf(SettingOption(current, uploadSizeLabel(current))) + UploadSizeOptions
 
 private data class ImageViewerTarget(val memo: Memo, val startIndex: Int)
-
-private fun Memo.isLikedBy(account: MemosAccount?): Boolean {
-    if (account == null) return false
-    val username = account.username
-    val userId = account.userName.substringAfterLast('/')
-    return reactions.any { reaction ->
-        val creator = reaction.creator.substringAfterLast('/')
-        reaction.reactionType == "❤️" && (creator.equals(username, ignoreCase = true) || creator == userId)
-    }
-}
 
 private fun copyMemoLink(context: Context, url: String) {
     if (url.isBlank()) return
