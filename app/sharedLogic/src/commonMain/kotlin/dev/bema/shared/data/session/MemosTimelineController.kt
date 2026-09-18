@@ -73,36 +73,58 @@ data class MemosAppState(
 interface MemosUiController {
     val state: StateFlow<MemosAppState>
 
+    // Annotated with @Throws so Swift receives them as `async throws`: Kotlin/Native
+    // terminates the process when a non-CancellationException escapes an unannotated
+    // suspend function, and a client can reach the `require`/`error` validation paths.
+    @Throws(Exception::class)
     suspend fun addAccount(instanceUrl: String, username: String, password: String)
+    @Throws(Exception::class)
     suspend fun selectAccount(accountId: String)
+    @Throws(Exception::class)
     suspend fun renameAccount(accountId: String, displayName: String)
+    @Throws(Exception::class)
     suspend fun setAccountPinned(accountId: String, pinned: Boolean)
+    @Throws(Exception::class)
     suspend fun removeAccount(accountId: String)
+    @Throws(Exception::class)
     suspend fun refreshTimeline(filter: String = "")
+
     // Silent check for newer memos; shows a banner instead of jumping the visible list.
+    @Throws(Exception::class)
     suspend fun revalidateTimeline()
+    @Throws(Exception::class)
     suspend fun loadMore()
+    @Throws(Exception::class)
     suspend fun search(query: String): List<Memo>
+    @Throws(Exception::class)
     suspend fun loadInstanceSettings(): InstanceSetting
+    @Throws(Exception::class)
     suspend fun saveInstanceSettings(
         general: GeneralSetting,
         memoRelated: MemoRelatedSetting,
         workspace: WorkspaceSetting
     )
+    @Throws(Exception::class)
     suspend fun publish(
         content: String,
         visibility: Visibility = Visibility.PRIVATE,
         pendingAttachments: List<PendingAttachment> = emptyList()
     )
+    @Throws(Exception::class)
     suspend fun openMemo(name: String)
     fun closeMemo()
+    @Throws(Exception::class)
     suspend fun comment(content: String)
+    @Throws(Exception::class)
     suspend fun react(memo: Memo, reactionType: String)
     fun memoUrl(memo: Memo): String
     fun siteLogoUrl(): String
     fun accountLogoUrl(account: MemosAccount): String
+    @Throws(Exception::class)
     suspend fun avatarBytes(user: User): ByteArray?
+    @Throws(Exception::class)
     suspend fun accountAvatarBytes(account: MemosAccount): ByteArray?
+    @Throws(Exception::class)
     suspend fun attachmentBytes(attachment: Attachment, thumbnail: Boolean = false): ByteArray?
 }
 
