@@ -1,6 +1,7 @@
 package dev.bema.shared.data.storage
 
 import dev.bema.shared.IosInterop
+import kotlinx.cinterop.ExperimentalForeignApi
 import platform.Foundation.NSApplicationSupportDirectory
 import platform.Foundation.NSData
 import platform.Foundation.NSFileManager
@@ -24,6 +25,7 @@ import platform.Foundation.NSUserDomainMask
  *
  * Note: file protection is a no-op on the Simulator, so only a device proves it.
  */
+@OptIn(ExperimentalForeignApi::class)
 actual object PlatformKeyValueStore : KeyValueStore {
     private const val DIRECTORY_NAME = "bema-store"
 
