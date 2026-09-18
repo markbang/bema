@@ -80,10 +80,9 @@ jobs:
             exit 1
           fi
           for apk in "${apks[@]}"; do
-            if [[ "$apk" == *-unsigned.apk ]]; then
-              echo "::error::$apk is unsigned."
-              exit 1
-            fi
+            # No `-unsigned` name check: the release outputs are renamed, so AGP no
+            # longer adds that suffix. apksigner is the gate — it fails on an
+            # unsigned APK, and the runner's `bash -e` turns that into a red step.
             "$apksigner" verify --verbose --print-certs "$apk"
           done
 
@@ -130,7 +129,9 @@ jobs:
           # The four real ABI splits; `universal` stays a GitHub Release asset only,
           # because the app selects the entry for its own ABI.
           for arch in arm64-v8a armeabi-v7a x86 x86_64; do
-            apk="app/androidApp/build/outputs/apk/release/androidApp-${arch}-release.apk"
+            # Name comes from app/androidApp/build.gradle.kts, which is the source
+            # of truth for the release artifact names users download.
+            apk="app/androidApp/build/outputs/apk/release/bema-v${version}-android-${arch}.apk"
             sha256="$(sha256sum "$apk" | cut -d' ' -f1)"
             shape=(--form-string "version=$version" --form-string "arch=$arch" --form-string "sha256=$sha256")
             # Omitted fields are stored as null, which is what the app expects for a

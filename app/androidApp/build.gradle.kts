@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import com.android.build.api.variant.FilterConfiguration
 
 plugins {
     // Kotlin support is built into AGP 9, so org.jetbrains.kotlin.android must
@@ -79,6 +80,22 @@ android {
 
     buildFeatures {
         compose = true
+    }
+}
+
+// Release artifacts reach users by filename, so use the shape the update host
+// already publishes for other applications — `bema-v<version>-android-<abi>.apk`
+// — rather than AGP's `androidApp-<abi>-release.apk`. Debug outputs keep their
+// default names because the UI Preview workflow references them.
+androidComponents {
+    onVariants { variant ->
+        if (variant.buildType != "release") return@onVariants
+        variant.outputs.forEach { output ->
+            val abi = output.filters
+                .firstOrNull { it.filterType == FilterConfiguration.FilterType.ABI }
+                ?.identifier
+            output.outputFileName.set("bema-v$appVersion-android-${abi ?: "universal"}.apk")
+        }
     }
 }
 
