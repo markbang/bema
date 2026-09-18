@@ -67,7 +67,7 @@ final class SignInViewController: UIViewController {
 
     private func apply(_ state: MemosAppState) {
         button.isEnabled = !state.isLoading
-        button.setTitleText(state.isLoading ? "Connecting…" : "Sign in")
+        button.setTitle(state.isLoading ? "Connecting…" : "Sign in", for: .normal)
         if state.activeAccount != nil {
             onSignedIn?()
             return

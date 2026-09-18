@@ -1,3 +1,4 @@
+import SharedLogic
 import UIKit
 
 @main

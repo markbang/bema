@@ -119,7 +119,7 @@ final class ComposerSheetViewController: MemosDialogViewController, PHPickerView
     private func updatePostButton() {
         let hasContent = !composer.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         postButton.isEnabled = (hasContent || !drafts.isEmpty) && !isPublishing
-        postButton.setTitleText(isPublishing ? "Posting" : "Post")
+        postButton.setTitle(isPublishing ? "Posting" : "Post", for: .normal)
     }
 
     private func observeKeyboard() {
