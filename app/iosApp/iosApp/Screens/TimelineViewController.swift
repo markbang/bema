@@ -109,8 +109,9 @@ final class TimelineViewController: ContentListViewController {
         loadedAccountId = account.id
         avatarTask?.cancel()
         avatarTask = Task { [weak self] in
+            guard let self else { return }
             let bytes = try? await self.controller.accountAvatarBytes(account: account)
-            guard !Task.isCancelled, let self else { return }
+            guard !Task.isCancelled else { return }
             let image = decodedImage(from: bytes)
             self.avatarButton.setImage(image ?? UIImage(systemName: "person.crop.circle"), for: .normal)
         }

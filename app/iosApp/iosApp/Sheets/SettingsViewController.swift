@@ -52,8 +52,9 @@ final class SettingsViewController: UIViewController {
         )
         let save = UIBarButtonItem(
             title: "Save",
-            style: .done,
-            primaryAction: UIAction { [weak self] _ in self?.confirmSave() }
+            image: nil,
+            primaryAction: UIAction { [weak self] _ in self?.confirmSave() },
+            menu: nil
         )
         save.tintColor = Palette.accent
         navigationItem.rightBarButtonItem = save
