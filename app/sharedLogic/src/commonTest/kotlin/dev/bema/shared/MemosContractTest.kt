@@ -5,7 +5,10 @@ import dev.bema.shared.data.model.Memo
 import dev.bema.shared.data.model.MemoInput
 import dev.bema.shared.data.model.PasswordCredentials
 import dev.bema.shared.data.model.SignInRequest
+import dev.bema.shared.data.model.ReactionInput
+import dev.bema.shared.data.model.UpsertReactionBody
 import dev.bema.shared.data.model.Visibility
+import dev.bema.shared.data.session.HEART_REACTION
 import dev.bema.shared.data.network.PersistentCookieStorage
 import dev.bema.shared.data.network.normalizeInstanceUrl
 import dev.bema.shared.data.storage.KeyValueStore
@@ -99,6 +102,17 @@ class MemosContractTest {
         val encoded = json.encodeToString(CreateCommentBody(MemoInput("nice", Visibility.PUBLIC)))
 
         assertEquals("""{"comment":{"content":"nice","visibility":"PUBLIC"}}""", encoded)
+    }
+
+    @Test
+    fun reactionRequestsCarryTheMemoNameInTheBody() {
+        // The request message marks `name` required, and the web client sends it
+        // alongside the path parameter. Omitting it is what made likes do nothing.
+        val encoded = json.encodeToString(UpsertReactionBody("memos/abc", ReactionInput(HEART_REACTION)))
+
+        assertTrue(encoded.contains("\"name\":\"memos/abc\""))
+        assertTrue(encoded.contains("\"reaction\":{\"reactionType\":"))
+        assertTrue(encoded.contains(HEART_REACTION))
     }
 
     @Test

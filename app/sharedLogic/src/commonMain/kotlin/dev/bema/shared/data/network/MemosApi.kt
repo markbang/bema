@@ -328,7 +328,7 @@ class MemosApi(
             httpClient.post {
                 url { api(name, "reactions") }
                 auth(token)
-                jsonBody(UpsertReactionBody(reaction = ReactionInput(reactionType)))
+                jsonBody(UpsertReactionBody(name = name, reaction = ReactionInput(reactionType)))
             }
         }.body()
 

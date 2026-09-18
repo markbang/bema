@@ -185,8 +185,17 @@ data class ReactionInput(
     val reactionType: String
 )
 
+/**
+ * Body of `POST /api/v1/memos/{memo}/reactions`.
+ *
+ * `name` is in the body as well as the path: the request message marks it
+ * required, and the web client sends it (web/src/components/
+ * MemoReactionListView/hooks.ts). Omitting it is what made likes silently do
+ * nothing. Same shape as MemoPatch, which also carries the resource name.
+ */
 @Serializable
 data class UpsertReactionBody(
+    val name: String,
     val reaction: ReactionInput
 )
 
