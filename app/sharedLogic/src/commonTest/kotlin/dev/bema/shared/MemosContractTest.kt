@@ -107,14 +107,14 @@ class MemosContractTest {
     }
 
     @Test
-    fun reactionRequestsCarryTheMemoNameAsWellAsThePath() {
-        // The server's own web client sends both. Instances that do not bind the path
-        // parameter onto a `body: "*"` request answer `400 invalid memo name` when the
-        // body omits it; ones that do bind it accept the duplicate.
-        val encoded = json.encodeToString(UpsertReactionBody("memos/abc", ReactionInput(HEART_REACTION)))
+    fun reactionRequestsIdentifyTheMemoInTheBody() {
+        // Memos 0.30.0 reads `reaction.contentId` and ignores the path parameter;
+        // later versions bind the path and ignore `contentId`. Sending it is what
+        // answers 200 on both, verified against a 0.30.0 and a newer server.
+        val encoded = json.encodeToString(UpsertReactionBody(ReactionInput("memos/abc", HEART_REACTION)))
 
         assertEquals(
-            """{"name":"memos/abc","reaction":{"reactionType":"$HEART_REACTION"}}""",
+            """{"reaction":{"contentId":"memos/abc","reactionType":"$HEART_REACTION"}}""",
             encoded
         )
     }

@@ -183,20 +183,19 @@ data class MemoPatch(
 
 @Serializable
 data class ReactionInput(
+    /**
+     * The memo being reacted to, as `memos/{uid}`.
+     *
+     * Memos 0.30.0 identifies the memo by this field and ignores the path
+     * parameter; later versions bind the path and ignore this one. Sending it is
+     * therefore what works on both — verified against a 0.30.0 and a newer server.
+     */
+    val contentId: String,
     val reactionType: String
 )
 
-/**
- * Body of `POST /api/v1/memos/{memo}/reactions`.
- *
- * `name` is sent even though the path template also carries it: the server's own
- * web client sends both, and instances that do not bind the path parameter onto a
- * `body: "*"` request answer `400 invalid memo name` when it is missing. A Memos
- * that does bind it accepts the duplicate.
- */
 @Serializable
 data class UpsertReactionBody(
-    val name: String,
     val reaction: ReactionInput
 )
 

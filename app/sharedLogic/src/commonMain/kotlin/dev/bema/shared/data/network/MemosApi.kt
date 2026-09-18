@@ -78,7 +78,7 @@ class MemosApi(
     private val accessTokenExpiresAt: () -> Instant? = { null },
     private val onUnauthorized: suspend () -> Unit = {},
     rawHttpClient: HttpClient = createPlatformHttpClient(),
-    cookieStorage: CookiesStorage = AcceptAllCookiesStorage()
+    private val cookieStorage: CookiesStorage = AcceptAllCookiesStorage()
 ) {
     private val baseUrl = normalizeInstanceUrl(instanceUrl)
     private val refreshMutex = Mutex()
@@ -100,7 +100,15 @@ class MemosApi(
         val current = accessTokenProvider()
         val expiring = accessTokenExpiresAt()?.let { it <= Clock.System.now() + TOKEN_REFRESH_MARGIN } == true
         val token = if (current.isNullOrBlank() || expiring) {
-            refreshMutex.withLock { refreshAccessToken() } ?: current
+            refreshMutex.withLock {
+                // Several requests start at once on a cold launch and all see no
+                // token. Re-read under the lock so they share one refresh: each
+                // refresh rotates the refresh token server side, and a burst of them
+                // can leave the app holding one the server has already retired.
+                val fresh = accessTokenProvider()
+                val freshExpiring = accessTokenExpiresAt()?.let { it <= Clock.System.now() + TOKEN_REFRESH_MARGIN } == true
+                if (!fresh.isNullOrBlank() && !freshExpiring) fresh else refreshAccessToken() ?: fresh ?: current
+            }
         } else {
             current
         }
@@ -133,6 +141,24 @@ class MemosApi(
             )
         }
         return this
+    }
+
+    /**
+     * Connect-protocol path for a service method, e.g.
+     * `memos.api.v1.AuthService/SignIn`.
+     *
+     * Memos mounts grpc-gateway under `/api/v1` and the Connect handlers, which is
+     * where cookies are handled, under `/memos.api.v1`. The refresh cookie is both
+     * written (`Set-Cookie`) and read (the gateway never forwards `Cookie` into
+     * request metadata) only on the Connect path, so the session calls use it.
+     */
+    private fun URLBuilder.connect(service: String, method: String) {
+        takeFrom(baseUrl)
+        appendPathSegments("memos.api.v1.$service", method)
+    }
+
+    private fun HttpRequestBuilder.connectProtocol() {
+        header("Connect-Protocol-Version", "1")
     }
 
     private fun URLBuilder.api(vararg path: String) {
@@ -169,13 +195,15 @@ class MemosApi(
 
     suspend fun signIn(username: String, password: String): SignInResponse =
         httpClient.post {
-            url { api("auth", "signin") }
+            url { connect("AuthService", "SignIn") }
+            connectProtocol()
             jsonBody(SignInRequest(PasswordCredentials(username, password)))
         }.requireSuccess().body()
 
     suspend fun refresh(): RefreshTokenResponse =
         httpClient.post {
-            url { api("auth", "refresh") }
+            url { connect("AuthService", "RefreshToken") }
+            connectProtocol()
             jsonBody(emptyMap<String, String>())
         }.requireSuccess().body()
 
@@ -184,7 +212,14 @@ class MemosApi(
             .body<CurrentUserResponse>().user
 
     suspend fun signOut() {
-        request { token -> httpClient.post { url { api("auth", "signout") }; auth(token) } }
+        request { token ->
+            httpClient.post {
+                url { connect("AuthService", "SignOut") }
+                connectProtocol()
+                auth(token)
+                jsonBody(emptyMap<String, String>())
+            }
+        }
     }
 
     suspend fun instanceProfile(): InstanceProfile =
@@ -358,7 +393,7 @@ class MemosApi(
             httpClient.post {
                 url { api(name, "reactions") }
                 auth(token)
-                jsonBody(UpsertReactionBody(name = name, reaction = ReactionInput(reactionType)))
+                jsonBody(UpsertReactionBody(reaction = ReactionInput(contentId = name, reactionType = reactionType)))
             }
         }.body()
 
