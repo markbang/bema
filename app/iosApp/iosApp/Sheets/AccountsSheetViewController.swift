@@ -1,3 +1,4 @@
+import SharedLogic
 import UIKit
 
 /// A tappable settings/action row: icon, label, optional destructive tint.

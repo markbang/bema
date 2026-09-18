@@ -1,3 +1,4 @@
+import SharedLogic
 import UIKit
 
 /// A single-choice list dialog, the equivalent of `SettingsOptionPicker`.

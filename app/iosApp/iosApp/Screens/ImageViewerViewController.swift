@@ -1,3 +1,4 @@
+import SharedLogic
 import UIKit
 
 /// Full-screen pager for a memo's images, matching the Android `ImageViewer`:

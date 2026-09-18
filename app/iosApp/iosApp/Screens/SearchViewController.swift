@@ -1,3 +1,4 @@
+import SharedLogic
 import UIKit
 
 /// The search tab. Mirrors the Android `SearchScreen`: a debounced CEL query

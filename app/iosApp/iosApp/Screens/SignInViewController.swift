@@ -1,3 +1,4 @@
+import SharedLogic
 import UIKit
 
 /// The full-screen sign-in form, matching the Android `SignInScreen`.

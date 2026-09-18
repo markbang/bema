@@ -1,4 +1,5 @@
 import PhotosUI
+import SharedLogic
 import UIKit
 
 /// The "New memo" dialog: markdown editor with a Write/Preview switch, the

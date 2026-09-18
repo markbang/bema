@@ -27,6 +27,10 @@ final class TopChromeView: UIView {
         addSubview(contentHolder)
     }
 
+    convenience init() {
+        self.init(frame: .zero)
+    }
+
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     override func layoutSubviews() {
@@ -86,15 +90,15 @@ final class StatusBarVeilView: UIView {
         layer.addSublayer(gradientLayer)
     }
 
+    convenience init() {
+        self.init(frame: .zero)
+    }
+
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     override func layoutSubviews() {
         super.layoutSubviews()
         gradientLayer.frame = bounds
-    }
-
-    func preferredHeight() -> CGFloat {
-        safeAreaInsets.top + 18
     }
 }
 
@@ -134,6 +138,10 @@ final class BottomNavView: UIView {
         updateSelection()
     }
 
+    convenience init() {
+        self.init(frame: .zero)
+    }
+
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     @objc private func tapped(_ sender: UIButton) {
@@ -170,6 +178,10 @@ final class LoadingLineView: UIView {
         ])
     }
 
+    convenience init() {
+        self.init(frame: .zero)
+    }
+
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 }
 
@@ -179,6 +191,10 @@ final class AvatarImageView: UIImageView {
         contentMode = .scaleAspectFill
         clipsToBounds = true
         backgroundColor = Palette.avatarBackground
+    }
+
+    convenience init() {
+        self.init(frame: .zero)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }

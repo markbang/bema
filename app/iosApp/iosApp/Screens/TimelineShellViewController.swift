@@ -1,3 +1,4 @@
+import SharedLogic
 import UIKit
 
 /// Hosts the two tabs, the collapsing header, the bottom navigation and the

@@ -1,3 +1,4 @@
+import SharedLogic
 import UIKit
 
 /// The memo detail screen: the memo, its replies, and a reply composer that

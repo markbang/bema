@@ -1,3 +1,4 @@
+import SharedLogic
 import UIKit
 
 /// The actions a memo row hands back to the enclosing screen. Copy-link and
@@ -30,6 +31,10 @@ final class MediaPageView: UIControl {
             imageView.trailingAnchor.constraint(equalTo: trailingAnchor),
             imageView.bottomAnchor.constraint(equalTo: bottomAnchor)
         ])
+    }
+
+    convenience init() {
+        self.init(frame: .zero)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }

@@ -1,3 +1,4 @@
+import SharedLogic
 import UIKit
 
 /// Bridges to the shared module and the handful of helpers every screen needs.
