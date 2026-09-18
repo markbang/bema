@@ -9,6 +9,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import dev.bema.shared.data.session.MemosAppState
+import dev.bema.shared.data.session.MemosTimelineController
+import dev.bema.shared.data.session.ThemeMode
 import platform.Foundation.NSData
 import platform.Foundation.create
 import platform.posix.memcpy
@@ -34,6 +36,14 @@ object IosInterop {
         }
         return IosObservation(job)
     }
+
+    /**
+     * The controller's current theme mode.
+     *
+     * `StateFlow.value` bridges to Swift as `Any?`, so Swift cannot read it
+     * directly; this is the typed accessor for the app's initial interface style.
+     */
+    fun themeMode(controller: MemosTimelineController): ThemeMode = controller.state.value.themeMode
 
     @OptIn(ExperimentalForeignApi::class)
     fun nsData(bytes: ByteArray): NSData {

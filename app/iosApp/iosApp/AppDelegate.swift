@@ -18,7 +18,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         window.tintColor = Palette.accent
         window.backgroundColor = Palette.ink
         window.rootViewController = RootTabBarController(controller: controller)
-        apply(themeMode: controller.state.value.themeMode)
+        apply(themeMode: IosInterop.shared.themeMode(controller: controller))
         // The palette is dynamic; only the interface style needs to be pushed when
         // the shared appearance preference changes.
         themeObservation = IosInterop.shared.observeState(flow: controller.state) { [weak self] state in
