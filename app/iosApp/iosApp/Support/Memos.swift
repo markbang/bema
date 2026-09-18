@@ -28,9 +28,10 @@ func formattedTime(_ memo: Memo) -> String {
     MemoPresentationKt.formatMemoTime(instant: memo.createTime)
 }
 
-/// Compose order is Private / Workspace / Public; Kotlin enum entries import
-/// lowercased, and two of them collide with Swift keywords.
-let publishVisibilities: [Visibility] = [.`private`, .protected, .`public`]
+/// Compose order is Private / Workspace / Public. Kotlin enum entries import
+/// lowercased, and a name colliding with a Swift keyword gains a trailing
+/// underscore — hence `private_`, not `` `private` ``.
+let publishVisibilities: [Visibility] = [.private_, .protected_, .public_]
 
 let publishVisibilityLabels = ["Private", "Workspace", "Public"]
 

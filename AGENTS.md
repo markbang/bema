@@ -38,8 +38,10 @@ sources by `tools/miuix_icons.py`; change the generator and re-run it.
 - Swift cannot collect a `StateFlow`. `IosInterop.observeState` in `src/iosMain`
   wraps it in a callback and returns a cancellable handle; it also converts
   between `ByteArray` and `NSData`.
-- Kotlin enum entries import lowercased, which collides with Swift keywords:
-  `Visibility.PRIVATE` is `` Visibility.`private` ``.
+- Kotlin enum entries import lowercased, and one that collides with a Swift
+  keyword gains a trailing underscore: `Visibility.PRIVATE` is
+  `Visibility.private_`. The generated header in the framework is the
+  authority; the iOS CI job prints it when the build fails.
 
 ## Commits
 
