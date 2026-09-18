@@ -1,6 +1,7 @@
 package dev.bema.shared.data.network
 
 import dev.bema.shared.data.model.Attachment
+import dev.bema.shared.data.model.AttachmentUpload
 import dev.bema.shared.data.model.BatchGetUsersRequest
 import dev.bema.shared.data.model.BatchGetUsersResponse
 import dev.bema.shared.data.model.InstanceSetting
@@ -24,7 +25,6 @@ import dev.bema.shared.data.model.RefreshTokenResponse
 import dev.bema.shared.data.model.SignInRequest
 import dev.bema.shared.data.model.SignInResponse
 import dev.bema.shared.data.model.UpsertReactionBody
-import dev.bema.shared.data.model.UpdateInstanceSettingRequest
 import dev.bema.shared.data.model.User
 import dev.bema.shared.data.model.UserNotification
 import dev.bema.shared.data.model.Visibility
@@ -43,6 +43,7 @@ import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsBytes
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.URLBuilder
@@ -52,6 +53,8 @@ import io.ktor.http.isSuccess
 import io.ktor.http.takeFrom
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlin.io.encoding.Base64
+import kotlin.io.encoding.ExperimentalEncodingApi
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
 
@@ -100,9 +103,16 @@ class MemosApi(
         return block(refreshed).requireSuccess()
     }
 
-    private fun HttpResponse.requireSuccess(): HttpResponse {
+    private suspend fun HttpResponse.requireSuccess(): HttpResponse {
         if (!status.isSuccess()) {
-            throw MemosApiException(status, "Memos API request failed: ${status.value} ${status.description}")
+            // Surface what the server said: the status alone sent us guessing at
+            // request shapes more than once.
+            val detail = runCatching { bodyAsText() }.getOrNull().orEmpty().trim()
+            throw MemosApiException(
+                status,
+                "Memos API request failed: ${status.value} ${status.description}" +
+                    if (detail.isEmpty()) "" else " — ${detail.take(400)}"
+            )
         }
         return this
     }
@@ -181,12 +191,12 @@ class MemosApi(
     suspend fun updateInstanceSetting(setting: InstanceSetting): InstanceSetting =
         request { token ->
             httpClient.patch {
-                url {
-                    api(setting.name)
-                    parameters.append("updateMask", "setting")
-                }
+                // `body: "setting"` binds the body to the setting itself, so wrapping
+                // it in a request object makes the server reject the unknown field:
+                // 400 could not find field "setting" in InstanceSetting.
+                url { api(setting.name) }
                 auth(token)
-                jsonBody(UpdateInstanceSettingRequest(setting))
+                jsonBody(setting)
             }
         }.body()
 
@@ -234,12 +244,15 @@ class MemosApi(
     suspend fun getMemo(name: String): Memo =
         request { token -> httpClient.get { url { api(name) }; auth(token) } }.body()
 
+    @OptIn(ExperimentalEncodingApi::class)
     suspend fun createAttachment(filename: String, content: ByteArray, type: String): Attachment =
         request { token ->
             httpClient.post {
                 url { api("attachments") }
                 auth(token)
-                jsonBody(dev.bema.shared.data.model.AttachmentUpload(filename, content, type))
+                // `content` is a proto bytes field, which JSON carries as base64; a
+                // ByteArray would serialise to an array of numbers and be rejected.
+                jsonBody(AttachmentUpload(filename, Base64.encode(content), type))
             }
         }.body()
 

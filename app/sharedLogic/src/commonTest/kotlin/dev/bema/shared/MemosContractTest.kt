@@ -1,5 +1,6 @@
 package dev.bema.shared
 
+import dev.bema.shared.data.model.AttachmentUpload
 import dev.bema.shared.data.model.Memo
 import dev.bema.shared.data.model.MemoInput
 import dev.bema.shared.data.model.PasswordCredentials
@@ -17,6 +18,8 @@ import io.ktor.http.Url
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlin.io.encoding.Base64
+import kotlin.io.encoding.ExperimentalEncodingApi
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -113,6 +116,19 @@ class MemosContractTest {
         assertFalse(encoded.contains("\"name\""))
         assertTrue(encoded.contains("\"reaction\":{\"reactionType\":"))
         assertTrue(encoded.contains(HEART_REACTION))
+    }
+
+    @OptIn(ExperimentalEncodingApi::class)
+    @Test
+    fun attachmentContentIsBase64InTheRequestBody() {
+        // `Attachment.content` is a proto bytes field, which JSON carries as a base64
+        // string. A ByteArray serialises to an array of numbers, which the server
+        // rejects with `invalid value for bytes field content`.
+        val encoded = json.encodeToString(
+            AttachmentUpload("audit.txt", Base64.encode("hello".encodeToByteArray()), "text/plain")
+        )
+
+        assertEquals("""{"filename":"audit.txt","content":"aGVsbG8=","type":"text/plain"}""", encoded)
     }
 
     @Test

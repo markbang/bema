@@ -153,7 +153,8 @@ enum class UserState {
 @Serializable
 data class AttachmentUpload(
     val filename: String,
-    val content: ByteArray,
+    /** Base64: proto JSON carries a `bytes` field as a string, not an array. */
+    val content: String,
     val type: String
 )
 
@@ -316,11 +317,6 @@ data class WorkspaceSetting(
     val disallowChangeUsername: Boolean = false,
     @SerialName("disallow_change_nickname")
     val disallowChangeNickname: Boolean = false
-)
-
-@Serializable
-data class UpdateInstanceSettingRequest(
-    val setting: InstanceSetting
 )
 
 @Serializable
