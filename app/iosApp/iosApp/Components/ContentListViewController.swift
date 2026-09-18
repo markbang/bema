@@ -1,20 +1,10 @@
+import SharedLogic
 import UIKit
 
-/// Shared plumbing for the two scrollable tabs: a table pinned edge to edge,
-/// inset below the chrome and above the bottom nav, forwarding the scrolled
-/// distance so the shell can collapse the header.
+/// Shared plumbing for the two list tabs. The navigation bar and tab bar own the
+/// insets now, so this only deals with the table and paging.
 class ContentListViewController: UIViewController, UITableViewDataSource, UITableViewDelegate {
     let tableView = UITableView(frame: .zero, style: .plain)
-
-    var onScroll: ((CGFloat) -> Void)?
-
-    var topInset: CGFloat = 0 {
-        didSet { applyInsets() }
-    }
-
-    var bottomInset: CGFloat = 0 {
-        didSet { applyInsets() }
-    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -24,8 +14,6 @@ class ContentListViewController: UIViewController, UITableViewDataSource, UITabl
         tableView.rowHeight = UITableView.automaticDimension
         tableView.estimatedRowHeight = 320
         tableView.keyboardDismissMode = .interactive
-        // The shell owns the insets; automatic adjustment would double them up.
-        tableView.contentInsetAdjustmentBehavior = .never
         tableView.dataSource = self
         tableView.delegate = self
         tableView.register(MemoTweetCell.self, forCellReuseIdentifier: MemoTweetCell.reuseIdentifier)
@@ -41,17 +29,6 @@ class ContentListViewController: UIViewController, UITableViewDataSource, UITabl
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
-        applyInsets()
-    }
-
-    func applyInsets() {
-        let insets = UIEdgeInsets(top: topInset, left: 0, bottom: bottomInset, right: 0)
-        tableView.contentInset = insets
-        tableView.verticalScrollIndicatorInsets = insets
-    }
-
-    func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        onScroll?(scrollView.contentOffset.y + scrollView.adjustedContentInset.top)
     }
 
     /// Subclasses override to page in more content.
@@ -61,6 +38,26 @@ class ContentListViewController: UIViewController, UITableViewDataSource, UITabl
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         tableView.dequeueReusableCell(withIdentifier: LoadingCell.reuseIdentifier, for: indexPath)
+    }
+
+    /// A centered message for the states that have no rows to show.
+    func showPlaceholder(_ message: String, tint: UIColor = Palette.textSecondary) {
+        let label = UILabel()
+        label.text = message
+        label.font = TextStyle.paragraph
+        label.textColor = tint
+        label.numberOfLines = 0
+        label.textAlignment = .center
+        let container = UIView()
+        container.frame = tableView.bounds
+        label.frame = container.bounds.insetBy(dx: 32, dy: 0)
+        label.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        container.addSubview(label)
+        tableView.backgroundView = container
+    }
+
+    func clearPlaceholder() {
+        tableView.backgroundView = nil
     }
 }
 
@@ -141,22 +138,23 @@ final class RepliesHeaderCell: UITableViewCell {
     }
 }
 
-/// "New memos · tap to refresh" — shown when a silent revalidation found newer
-/// memos than the visible list.
+/// Shown when a silent revalidation found memos newer than the visible list.
 final class NewerMemosCell: UITableViewCell {
     static let reuseIdentifier = "NewerMemosCell"
     private let button = UIButton(type: .system)
+    private var tapAction: UIAction?
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
         backgroundColor = Palette.ink
         selectionStyle = .none
-        button.setTitle("New memos · tap to refresh", for: .normal)
-        button.setTitleColor(Palette.accent, for: .normal)
-        button.titleLabel?.font = TextStyle.footnote1
-        button.backgroundColor = Palette.inkElevated
-        button.layer.cornerRadius = 16
-        button.contentEdgeInsets = UIEdgeInsets(top: 8, left: 14, bottom: 8, right: 14)
+        var configuration = UIButton.Configuration.filled()
+        configuration.title = "New memos"
+        configuration.image = UIImage(systemName: "arrow.clockwise")
+        configuration.imagePadding = 6
+        configuration.baseBackgroundColor = Palette.accent
+        configuration.cornerStyle = .capsule
+        button.configuration = configuration
         button.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(button)
         NSLayoutConstraint.activate([
@@ -169,7 +167,10 @@ final class NewerMemosCell: UITableViewCell {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     func setAction(_ action: @escaping () -> Void) {
-        button.removeTarget(nil, action: nil, for: .touchUpInside)
-        button.addAction(UIAction { _ in action() }, for: .touchUpInside)
+        // Cells are reused, so the previous action has to go.
+        if let tapAction { button.removeAction(tapAction) }
+        let tap = UIAction { _ in action() }
+        button.addAction(tap, for: .touchUpInside)
+        tapAction = tap
     }
 }

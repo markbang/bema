@@ -1,6 +1,12 @@
 import UIKit
 
-/// The dark markdown editing surface: Compose's `MarkdownEditor`.
+/// The markdown shortcuts the toolbar offers.
+enum MarkdownCommand {
+    case bold, italic, code, link, heading, list
+}
+
+/// The dark markdown editing surface. Kept custom: it is part of the shared
+/// design rather than platform chrome.
 final class MarkdownTextView: UITextView {
     var onChange: ((String) -> Void)?
 
@@ -67,83 +73,26 @@ final class MarkdownTextView: UITextView {
     }
 }
 
-/// The markdown shortcut row: B, I, `</>`, link, heading, list.
-final class MarkdownToolbar: UIView {
-    enum Command {
-        case bold, italic, code, link, heading, list
-    }
-
-    var onCommand: ((Command) -> Void)?
-
-    private static let entries: [(String, String, Command)] = [
-        ("B", "Bold", .bold),
-        ("I", "Italic", .italic),
-        ("</>", "Code", .code),
-        ("🔗", "Link", .link),
-        ("#", "Heading", .heading),
-        ("-", "List", .list)
-    ]
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        let row = UIStackView()
-        row.axis = .horizontal
-        row.spacing = 6
-        row.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(row)
-        NSLayoutConstraint.activate([
-            row.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-            row.leadingAnchor.constraint(equalTo: leadingAnchor),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4)
-        ])
-        for (symbol, label, command) in Self.entries {
-            let button = ChipButton(title: symbol, selected: false) { [weak self] in
-                self?.onCommand?(command)
-            }
-            button.accessibilityLabel = label
-            button.titleLabel?.font = TextStyle.body1.weight(.medium)
-            button.widthAnchor.constraint(greaterThanOrEqualToConstant: 36).isActive = true
-            button.heightAnchor.constraint(equalToConstant: 36).isActive = true
-            row.addArrangedSubview(button)
-        }
-    }
-
-    convenience init() {
-        self.init(frame: .zero)
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-}
-
-/// Write/Preview toggle plus the editing surface. Shared by the post composer
-/// and the reply composer, like `MarkdownModeToggle` + editor + toolbar.
+/// Write/Preview switch, editor and the markdown toolbar — the pieces Android
+/// calls `MarkdownModeToggle`, `MarkdownEditor` and `MarkdownToolbar`.
 final class MarkdownComposerView: UIView {
     var onTextChange: ((String) -> Void)?
-
     var text: String { editor.text ?? "" }
 
-    func setText(_ value: String) {
-        editor.setText(value)
-    }
-
-    private let writeChip: ChipButton
-    private let previewChip: ChipButton
+    private let modeControl = UISegmentedControl(items: ["Write", "Preview"])
     private let editor: MarkdownTextView
     private let previewScroll = UIScrollView()
     private let previewLabel = UILabel()
-    private let toolbar = MarkdownToolbar()
-
-    private var isPreview = false
+    private let toolbar = UIToolbar()
 
     init(placeholder: String, editorHeight: ClosedRange<CGFloat>) {
-        writeChip = ChipButton(title: "Write", selected: true) { }
-        previewChip = ChipButton(title: "Preview", selected: false) { }
         editor = MarkdownTextView(placeholder: placeholder)
         super.init(frame: .zero)
 
-        writeChip.addAction(UIAction { [weak self] _ in self?.setPreview(false) }, for: .touchUpInside)
-        previewChip.addAction(UIAction { [weak self] _ in self?.setPreview(true) }, for: .touchUpInside)
+        modeControl.selectedSegmentIndex = 0
+        modeControl.addAction(UIAction { [weak self] _ in
+            self?.setPreview(self?.modeControl.selectedSegmentIndex == 1)
+        }, for: .valueChanged)
 
         editor.translatesAutoresizingMaskIntoConstraints = false
         editor.isScrollEnabled = editorHeight.lowerBound == editorHeight.upperBound
@@ -157,15 +106,19 @@ final class MarkdownComposerView: UIView {
         previewScroll.isHidden = true
         previewScroll.addSubview(previewLabel)
 
-        let toggle = UIStackView(arrangedSubviews: [writeChip, previewChip])
-        toggle.axis = .horizontal
-        toggle.spacing = 8
+        toolbar.translatesAutoresizingMaskIntoConstraints = false
+        toolbar.items = [
+            barItem("B", label: "Bold", command: .bold),
+            barItem("I", label: "Italic", command: .italic),
+            barItem("</>", label: "Code", command: .code),
+            barItem("link", label: "Link", command: .link, symbol: "link"),
+            barItem("#", label: "Heading", command: .heading),
+            barItem("-", label: "List", command: .list)
+        ]
 
-        toolbar.onCommand = { [weak self] command in self?.apply(command) }
-
-        let stack = UIStackView(arrangedSubviews: [toggle, editor, previewScroll, toolbar])
+        let stack = UIStackView(arrangedSubviews: [modeControl, editor, previewScroll, toolbar])
         stack.axis = .vertical
-        stack.spacing = 8
+        stack.spacing = 10
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
 
@@ -190,27 +143,39 @@ final class MarkdownComposerView: UIView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    func setPreview(_ preview: Bool) {
-        isPreview = preview
-        writeChip.setSelected(!preview)
-        previewChip.setSelected(preview)
+    func setText(_ value: String) {
+        editor.setText(value)
+    }
+
+    private func barItem(_ title: String, label: String, command: MarkdownCommand, symbol: String? = nil) -> UIBarButtonItem {
+        let item: UIBarButtonItem
+        if let symbol {
+            item = UIBarButtonItem(image: UIImage(systemName: symbol), style: .plain, target: nil, action: nil)
+        } else {
+            item = UIBarButtonItem(title: title, style: .plain, target: nil, action: nil)
+            item.setTitleTextAttributes([.font: TextStyle.body1.weight(.semibold)], for: .normal)
+        }
+        item.accessibilityLabel = label
+        item.primaryAction = UIAction { [weak self] _ in self?.apply(command) }
+        return item
+    }
+
+    private func setPreview(_ preview: Bool) {
+        modeControl.selectedSegmentIndex = preview ? 1 : 0
         editor.isHidden = preview
         previewScroll.isHidden = !preview
-        if preview {
-            let content = editor.text ?? ""
-            if content.isEmpty {
-                previewLabel.attributedText = NSAttributedString(string: "Nothing to preview", attributes: [
-                    .font: TextStyle.paragraph,
-                    .foregroundColor: Palette.textSecondary
-                ])
-            } else {
-                previewLabel.attributedText = Markdown.attributed(content)
-            }
-        }
+        guard preview else { return }
+        let content = editor.text ?? ""
+        previewLabel.attributedText = content.isEmpty
+            ? NSAttributedString(string: "Nothing to preview", attributes: [
+                .font: TextStyle.paragraph,
+                .foregroundColor: Palette.textSecondary
+            ])
+            : Markdown.attributed(content)
     }
 
     /// Mirrors `insertMarkdown` / `insertLinePrefix`.
-    private func apply(_ command: MarkdownToolbar.Command) {
+    private func apply(_ command: MarkdownCommand) {
         switch command {
         case .bold: editor.wrapSelection(with: "**", suffix: "**")
         case .italic: editor.wrapSelection(with: "*", suffix: "*")

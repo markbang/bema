@@ -1,8 +1,8 @@
 import SharedLogic
 import UIKit
 
-/// The memo detail screen: the memo, its replies, and a reply composer that
-/// slides up from the bottom. Mirrors `MemoDetailScreen`.
+/// The memo detail screen: the memo, its replies, and a reply panel that rises
+/// with the keyboard. Chrome comes from the navigation bar.
 final class MemoDetailViewController: ContentListViewController {
     private enum Item {
         case memo(Memo)
@@ -17,21 +17,12 @@ final class MemoDetailViewController: ContentListViewController {
     private var state: MemosAppState?
     private var items: [Item] = []
 
-    private let chrome = TopChromeView()
-    private let veil = StatusBarVeilView()
-    private let backButton = UIButton(type: .custom)
-    private let chromeTitle = UILabel()
-    private let replyFAB = UIButton(type: .custom)
     private let commentPanel = UIView()
     private let commentComposer = MarkdownComposerView(
         placeholder: "Write your reply in Markdown",
         editorHeight: 120...120
     )
-    private let sendButton = TextActionButton(title: "Reply", primary: true)
-
-    private var chromeHeight: CGFloat = 0
-    private var chromeHeightConstraint: NSLayoutConstraint!
-    private var veilHeightConstraint: NSLayoutConstraint!
+    private let sendButton = UIButton(type: .system)
     private var panelVisible = false
 
     init(controller: MemosTimelineController, memoName: String, startComment: Bool) {
@@ -39,15 +30,22 @@ final class MemoDetailViewController: ContentListViewController {
         self.memoName = memoName
         self.startComment = startComment
         super.init(nibName: nil, bundle: nil)
+        // The Compose detail has no bottom navigation either.
+        hidesBottomBarWhenPushed = true
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        configureChrome()
+        title = "Memo"
+        navigationItem.largeTitleDisplayMode = .never
+        navigationItem.rightBarButtonItem = UIBarButtonItem(
+            image: UIImage(systemName: "arrowshape.turn.up.left"),
+            primaryAction: UIAction { [weak self] _ in self?.setCommentPanel(visible: true, animated: true) }
+        )
+        navigationItem.rightBarButtonItem?.accessibilityLabel = "Write a reply"
         configureCommentPanel()
-        bottomInset = 28
 
         observation = IosInterop.shared.observeState(flow: controller.state) { [weak self] state in
             self?.apply(state)
@@ -71,94 +69,38 @@ final class MemoDetailViewController: ContentListViewController {
         if isMovingFromParent { controller.closeMemo() }
     }
 
-    override func viewDidLayoutSubviews() {
-        super.viewDidLayoutSubviews()
-        let height = chrome.fittingHeight(width: view.bounds.width)
-        if abs(height - chromeHeight) > 0.5 {
-            chromeHeight = height
-            chromeHeightConstraint.constant = height
-            topInset = height
-        }
-        let veilHeight = view.safeAreaInsets.top + 18
-        if abs(veilHeight - veilHeightConstraint.constant) > 0.5 {
-            veilHeightConstraint.constant = veilHeight
-        }
-    }
-
-    private func configureChrome() {
-        chrome.translatesAutoresizingMaskIntoConstraints = false
-        veil.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(chrome)
-        view.addSubview(veil)
-
-        chromeHeightConstraint = chrome.heightAnchor.constraint(equalToConstant: 0)
-        veilHeightConstraint = veil.heightAnchor.constraint(equalToConstant: 36)
-        NSLayoutConstraint.activate([
-            chrome.topAnchor.constraint(equalTo: view.topAnchor),
-            chrome.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            chrome.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            chromeHeightConstraint,
-            veil.topAnchor.constraint(equalTo: view.topAnchor),
-            veil.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            veil.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            veilHeightConstraint
-        ])
-
-        backButton.setImage(MiuixIcons.image(.back, size: 24, color: Palette.textPrimary), for: .normal)
-        backButton.accessibilityLabel = "Back"
-        backButton.addAction(UIAction { [weak self] _ in
-            self?.navigationController?.popViewController(animated: true)
-        }, for: .touchUpInside)
-        chromeTitle.text = "Memo"
-        chromeTitle.font = TextStyle.title3.weight(.bold)
-        chromeTitle.textColor = Palette.textPrimary
-
-        let row = UIStackView(arrangedSubviews: [backButton, chromeTitle])
-        row.axis = .horizontal
-        row.alignment = .center
-        row.spacing = 8
-        NSLayoutConstraint.activate([
-            backButton.widthAnchor.constraint(equalToConstant: 40),
-            backButton.heightAnchor.constraint(equalToConstant: 40)
-        ])
-        chrome.install(row, insets: UIEdgeInsets(top: 4, left: 10, bottom: 4, right: 10))
-
-        replyFAB.translatesAutoresizingMaskIntoConstraints = false
-        replyFAB.backgroundColor = Palette.accent
-        replyFAB.setImage(MiuixIcons.image(.reply, size: 24, color: .white), for: .normal)
-        replyFAB.layer.cornerRadius = Metrics.fabSize / 2
-        replyFAB.accessibilityLabel = "Write a reply"
-        replyFAB.addAction(UIAction { [weak self] _ in self?.setCommentPanel(visible: true, animated: true) }, for: .touchUpInside)
-        view.addSubview(replyFAB)
-        NSLayoutConstraint.activate([
-            replyFAB.widthAnchor.constraint(equalToConstant: Metrics.fabSize),
-            replyFAB.heightAnchor.constraint(equalToConstant: Metrics.fabSize),
-            replyFAB.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
-            replyFAB.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -20)
-        ])
-    }
-
     private func configureCommentPanel() {
         commentPanel.backgroundColor = Palette.inkElevated
         commentPanel.translatesAutoresizingMaskIntoConstraints = false
         commentPanel.isHidden = true
         view.addSubview(commentPanel)
 
-        let cancel = TextActionButton(title: "Cancel")
+        var cancelConfiguration = UIButton.Configuration.plain()
+        cancelConfiguration.title = "Cancel"
+        let cancel = UIButton(type: .system)
+        cancel.configuration = cancelConfiguration
         cancel.addAction(UIAction { [weak self] _ in
             guard let self else { return }
             self.commentComposer.setText("")
             self.setCommentPanel(visible: false, animated: true)
         }, for: .touchUpInside)
+
+        var sendConfiguration = UIButton.Configuration.filled()
+        sendConfiguration.title = "Reply"
+        sendConfiguration.baseBackgroundColor = Palette.accent
+        sendButton.configuration = sendConfiguration
         sendButton.addAction(UIAction { [weak self] _ in self?.sendComment() }, for: .touchUpInside)
+
         let buttons = UIStackView(arrangedSubviews: [cancel, sendButton])
         buttons.axis = .horizontal
-        buttons.distribution = .fillEqually
         buttons.spacing = 12
 
-        let stack = sheetStack([commentComposer, buttons], spacing: 12)
+        let stack = UIStackView(arrangedSubviews: [commentComposer, buttons])
+        stack.axis = .vertical
+        stack.spacing = 12
         stack.translatesAutoresizingMaskIntoConstraints = false
         commentPanel.addSubview(stack)
+
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: commentPanel.topAnchor, constant: 16),
             stack.leadingAnchor.constraint(equalTo: commentPanel.leadingAnchor, constant: 16),
@@ -180,8 +122,7 @@ final class MemoDetailViewController: ContentListViewController {
 
     private func setCommentPanel(visible: Bool, animated: Bool) {
         panelVisible = visible
-        replyFAB.isHidden = visible
-        bottomInset = visible ? 300 : 28
+        tableView.contentInset.bottom = visible ? 320 : 0
         guard animated else {
             commentPanel.isHidden = !visible
             return
@@ -189,9 +130,9 @@ final class MemoDetailViewController: ContentListViewController {
         if visible {
             commentPanel.isHidden = false
             commentPanel.transform = CGAffineTransform(translationX: 0, y: 320)
-            UIView.animate(withDuration: 0.2) { self.commentPanel.transform = .identity }
+            UIView.animate(withDuration: 0.25) { self.commentPanel.transform = .identity }
         } else {
-            UIView.animate(withDuration: 0.2) {
+            UIView.animate(withDuration: 0.25) {
                 self.commentPanel.transform = CGAffineTransform(translationX: 0, y: 320)
             } completion: { _ in
                 self.commentPanel.isHidden = true
@@ -263,7 +204,6 @@ final class MemoDetailViewController: ContentListViewController {
     private func openImage(memo: Memo, index: Int) {
         let viewer = ImageViewerViewController(controller: controller, memo: memo, startIndex: index)
         viewer.modalPresentationStyle = .fullScreen
-        viewer.modalTransitionStyle = .crossDissolve
         present(viewer, animated: true)
     }
 }

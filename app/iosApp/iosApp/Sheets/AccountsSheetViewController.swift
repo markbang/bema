@@ -1,44 +1,6 @@
 import SharedLogic
 import UIKit
 
-/// A tappable settings/action row: icon, label, optional destructive tint.
-final class TapRowView: UIView {
-    private let onTap: () -> Void
-
-    init(icon: MiuixIcon, title: String, destructive: Bool = false, onTap: @escaping () -> Void) {
-        self.onTap = onTap
-        super.init(frame: .zero)
-        let color = destructive ? Palette.danger : Palette.textPrimary
-        let imageView = UIImageView(image: MiuixIcons.image(icon, size: 22, color: color))
-        imageView.translatesAutoresizingMaskIntoConstraints = false
-        let label = UILabel()
-        label.text = title
-        label.font = TextStyle.paragraph.weight(.medium)
-        label.textColor = color
-
-        let row = UIStackView(arrangedSubviews: [imageView, label])
-        row.axis = .horizontal
-        row.alignment = .center
-        row.spacing = 14
-        row.isUserInteractionEnabled = false
-        row.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(row)
-        NSLayoutConstraint.activate([
-            row.topAnchor.constraint(equalTo: topAnchor, constant: 14),
-            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-            row.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -10),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
-            imageView.widthAnchor.constraint(equalToConstant: 22),
-            imageView.heightAnchor.constraint(equalToConstant: 22)
-        ])
-        addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tapped)))
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-    @objc private func tapped() { onTap() }
-}
-
 /// One row of the account list: avatar, site title, account name, and a check
 /// when it is the active one.
 final class AccountRowView: UIView {
@@ -60,10 +22,6 @@ final class AccountRowView: UIView {
 
         let avatar = AvatarImageView()
         avatar.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            avatar.widthAnchor.constraint(equalToConstant: 42),
-            avatar.heightAnchor.constraint(equalToConstant: 42)
-        ])
         avatar.setAvatar(nil, label: account.visibleName)
         Task { [weak avatar] in
             let bytes = try? await controller.accountAvatarBytes(account: account)
@@ -94,14 +52,16 @@ final class AccountRowView: UIView {
         row.spacing = 12
         row.isUserInteractionEnabled = false
         if isActive {
-            row.addArrangedSubview(UIImageView(image: MiuixIcons.image(.ok, size: 20, color: Palette.accent)))
+            row.addArrangedSubview(UIImageView(image: UIImage(systemName: "checkmark")))
         }
         row.translatesAutoresizingMaskIntoConstraints = false
         addSubview(row)
         NSLayoutConstraint.activate([
+            avatar.widthAnchor.constraint(equalToConstant: 42),
+            avatar.heightAnchor.constraint(equalToConstant: 42),
             row.topAnchor.constraint(equalTo: topAnchor, constant: 10),
-            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            row.leadingAnchor.constraint(equalTo: leadingAnchor),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor),
             row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10)
         ])
 
@@ -119,8 +79,9 @@ final class AccountRowView: UIView {
     }
 }
 
-/// The account switcher bottom sheet: list, add, and per-account actions,
-/// matching the Android `AccountSheet`.
+/// The account switcher: list, add, and per-account actions, matching the
+/// Android `AccountSheet`. The sheet presentation supplies the grabber and
+/// drag-to-dismiss; alerts handle rename and removal.
 final class AccountsSheetViewController: UIViewController {
     private enum Mode {
         case list
@@ -133,66 +94,44 @@ final class AccountsSheetViewController: UIViewController {
     private var mode: Mode = .list
     private var observation: IosObservation?
 
-    private let card = UIView()
-    private let titleLabel = UILabel()
-    private let contentContainer = UIView()
-    private let startAction = UIButton(type: .custom)
-    private let endAction = UIButton(type: .custom)
-    private var panOffset: CGFloat = 0
+    private let scrollView = UIScrollView()
+    private let contentStack = UIStackView()
+    private lazy var addItem = UIBarButtonItem(
+        image: UIImage(systemName: "plus"),
+        primaryAction: UIAction { [weak self] _ in self?.setMode(.add) }
+    )
 
     init(controller: MemosTimelineController, state: MemosAppState) {
         self.controller = controller
         self.state = state
         super.init(nibName: nil, bundle: nil)
-        modalPresentationStyle = .overFullScreen
-        modalTransitionStyle = .crossDissolve
+        title = "Accounts"
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = UIColor.black.withAlphaComponent(0.5)
-        view.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(backdropTapped)))
+        view.backgroundColor = Palette.ink
 
-        card.backgroundColor = Palette.inkElevated
-        card.layer.cornerRadius = 20
-        card.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
-        card.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(card)
-        card.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(panned(_:))))
-
-        titleLabel.font = TextStyle.title4.weight(.bold)
-        titleLabel.textColor = Palette.textPrimary
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        card.addSubview(titleLabel)
-
-        configureAccessory(startAction, icon: .back, label: "Back to accounts")
-        configureAccessory(endAction, icon: .add, label: "Add account")
-        startAction.addAction(UIAction { [weak self] _ in self?.setMode(.list) }, for: .touchUpInside)
-        endAction.addAction(UIAction { [weak self] _ in self?.setMode(.add) }, for: .touchUpInside)
-
-        contentContainer.translatesAutoresizingMaskIntoConstraints = false
-        card.addSubview(contentContainer)
+        contentStack.axis = .vertical
+        contentStack.spacing = 4
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.addSubview(contentStack)
+        view.addSubview(scrollView)
 
         NSLayoutConstraint.activate([
-            card.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            card.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            card.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
 
-            titleLabel.topAnchor.constraint(equalTo: card.topAnchor, constant: 20),
-            titleLabel.leadingAnchor.constraint(equalTo: startAction.trailingAnchor, constant: 8),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: endAction.leadingAnchor, constant: -8),
-
-            startAction.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 12),
-            startAction.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
-            endAction.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -12),
-            endAction.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
-
-            contentContainer.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 14),
-            contentContainer.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 20),
-            contentContainer.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -20),
-            contentContainer.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -8)
+            contentStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 12),
+            contentStack.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 20),
+            contentStack.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -20),
+            contentStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -20),
+            contentStack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -40)
         ])
 
         observation = IosInterop.shared.observeState(flow: controller.state) { [weak self] state in
@@ -208,45 +147,45 @@ final class AccountsSheetViewController: UIViewController {
         observation?.cancel()
     }
 
-    private func configureAccessory(_ button: UIButton, icon: MiuixIcon, label: String) {
-        button.setImage(MiuixIcons.image(icon, size: 24, color: Palette.textPrimary), for: .normal)
-        button.accessibilityLabel = label
-        button.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            button.widthAnchor.constraint(equalToConstant: 36),
-            button.heightAnchor.constraint(equalToConstant: 36)
-        ])
-    }
-
     private func setMode(_ mode: Mode) {
         self.mode = mode
         render()
     }
 
     private func render() {
-        contentContainer.subviews.forEach { $0.removeFromSuperview() }
+        contentStack.arrangedSubviews.forEach {
+            contentStack.removeArrangedSubview($0)
+            $0.removeFromSuperview()
+        }
         switch mode {
         case .list:
-            titleLabel.text = "Accounts"
-            startAction.isHidden = true
-            endAction.isHidden = false
+            title = "Accounts"
+            navigationItem.rightBarButtonItem = addItem
+            navigationItem.leftBarButtonItem = nil
             renderList()
         case .add:
-            titleLabel.text = "Add account"
-            startAction.isHidden = false
-            endAction.isHidden = true
+            title = "Add account"
+            navigationItem.rightBarButtonItem = nil
+            navigationItem.leftBarButtonItem = backItem()
             renderAdd()
         case .actions(let account):
-            titleLabel.text = account.siteTitle
-            startAction.isHidden = false
-            endAction.isHidden = true
+            title = account.siteTitle
+            navigationItem.rightBarButtonItem = nil
+            navigationItem.leftBarButtonItem = backItem()
             renderActions(account)
         }
     }
 
+    private func backItem() -> UIBarButtonItem {
+        UIBarButtonItem(
+            image: UIImage(systemName: "chevron.backward"),
+            primaryAction: UIAction { [weak self] _ in self?.setMode(.list) }
+        )
+    }
+
     private func renderList() {
-        var rows: [UIView] = state.orderedAccounts.map { account in
-            AccountRowView(
+        for account in state.orderedAccounts {
+            contentStack.addArrangedSubview(AccountRowView(
                 account: account,
                 isActive: account.id == state.activeAccountId,
                 controller: controller,
@@ -259,7 +198,7 @@ final class AccountsSheetViewController: UIViewController {
                     self.dismiss(animated: true)
                 },
                 onHold: { [weak self] in self?.setMode(.actions(account)) }
-            )
+            ))
         }
 
         let hint = UILabel()
@@ -267,25 +206,29 @@ final class AccountsSheetViewController: UIViewController {
         hint.font = TextStyle.footnote1
         hint.textColor = Palette.textSecondary
         hint.numberOfLines = 0
-        rows.append(hint)
+        contentStack.addArrangedSubview(hint)
+        contentStack.setCustomSpacing(12, after: hint)
 
-        let done = TextActionButton(title: "Done", primary: true)
+        var doneConfiguration = UIButton.Configuration.filled()
+        doneConfiguration.title = "Done"
+        doneConfiguration.baseBackgroundColor = Palette.accent
+        doneConfiguration.cornerStyle = .large
+        let done = UIButton(type: .system)
+        done.configuration = doneConfiguration
         done.addAction(UIAction { [weak self] _ in self?.dismiss(animated: true) }, for: .touchUpInside)
-        rows.append(done)
-
-        install(sheetStack(rows, spacing: 4))
+        contentStack.addArrangedSubview(done)
     }
 
     private func renderAdd() {
-        let instance = DarkTextField(placeholder: "memos.example.com")
-        let username = DarkTextField(placeholder: "Username")
-        let password = DarkTextField(placeholder: "Password", secure: true)
-
         let intro = UILabel()
         intro.text = "Add another Memos instance to switch between accounts."
         intro.font = TextStyle.paragraph
         intro.textColor = Palette.textSecondary
         intro.numberOfLines = 0
+
+        let instance = UITextField.memo(memoPlaceholder: "memos.example.com")
+        let username = UITextField.memo(memoPlaceholder: "Username")
+        let password = UITextField.memo(memoPlaceholder: "Password", secure: true)
 
         let errorLabel = UILabel()
         errorLabel.font = TextStyle.paragraph
@@ -293,13 +236,22 @@ final class AccountsSheetViewController: UIViewController {
         errorLabel.numberOfLines = 0
         errorLabel.isHidden = true
 
-        let cancel = TextActionButton(title: "Cancel")
+        var cancelConfiguration = UIButton.Configuration.plain()
+        cancelConfiguration.title = "Cancel"
+        let cancel = UIButton(type: .system)
+        cancel.configuration = cancelConfiguration
         cancel.addAction(UIAction { [weak self] _ in self?.setMode(.list) }, for: .touchUpInside)
-        let add = TextActionButton(title: "Add", primary: true)
+
+        var addConfiguration = UIButton.Configuration.filled()
+        addConfiguration.title = "Add"
+        addConfiguration.baseBackgroundColor = Palette.accent
+        addConfiguration.cornerStyle = .large
+        let add = UIButton(type: .system)
+        add.configuration = addConfiguration
         add.addAction(UIAction { [weak self] _ in
             guard let self else { return }
-            let instanceValue = instance.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let userValue = username.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let instanceValue = instance.trimmedText
+            let userValue = username.trimmedText
             let passwordValue = password.text ?? ""
             guard !instanceValue.isEmpty, !userValue.isEmpty, !passwordValue.isEmpty else {
                 errorLabel.text = "Instance, username and password are required."
@@ -326,15 +278,17 @@ final class AccountsSheetViewController: UIViewController {
 
         let buttons = UIStackView(arrangedSubviews: [cancel, add])
         buttons.axis = .horizontal
-        buttons.distribution = .fillEqually
         buttons.spacing = 12
 
-        install(sheetStack([intro, instance, username, password, errorLabel, buttons], spacing: 12))
+        for view in [intro, instance, username, password, errorLabel, buttons] {
+            contentStack.addArrangedSubview(view)
+        }
+        contentStack.setCustomSpacing(14, after: errorLabel)
     }
 
     private func renderActions(_ account: MemosAccount) {
-        let pin = TapRowView(
-            icon: account.pinned ? .unpin : .pin,
+        contentStack.addArrangedSubview(ActionRowView(
+            icon: account.pinned ? "pin.slash" : "pin",
             title: account.pinned ? "Unpin" : "Pin to top"
         ) { [weak self] in
             guard let self else { return }
@@ -344,107 +298,67 @@ final class AccountsSheetViewController: UIViewController {
                 try? await self.controller.setAccountPinned(accountId: account.id, pinned: pinned)
             }
             self.setMode(.list)
-        }
-        let rename = TapRowView(icon: .rename, title: "Rename") { [weak self] in
+        })
+        contentStack.addArrangedSubview(ActionRowView(icon: "pencil", title: "Rename") { [weak self] in
             guard let self else { return }
             self.setMode(.list)
             self.presentRename(account)
-        }
-        let remove = TapRowView(icon: .delete, title: "Remove account", destructive: true) { [weak self] in
+        })
+        contentStack.addArrangedSubview(ActionRowView(icon: "trash", title: "Remove account", destructive: true) { [weak self] in
             guard let self else { return }
             self.setMode(.list)
             self.presentRemove(account)
-        }
-        install(sheetStack([pin, rename, remove], spacing: 2))
-    }
-
-    private func install(_ stack: UIStackView) {
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        contentContainer.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: contentContainer.topAnchor),
-            stack.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
-            stack.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor)
-        ])
+        })
     }
 
     private func presentRename(_ account: MemosAccount) {
-        let field = DarkTextField(placeholder: "Display name")
-        field.text = account.visibleName
-
-        let cancel = TextActionButton(title: "Cancel")
-        let save = TextActionButton(title: "Save", primary: true)
-        let buttons = UIStackView(arrangedSubviews: [cancel, save])
-        buttons.axis = .horizontal
-        buttons.distribution = .fillEqually
-        buttons.spacing = 12
-
-        let dialog = MemosDialogViewController(title: "Rename account")
-        cancel.addAction(UIAction { [weak dialog] _ in dialog?.dismiss(animated: true) }, for: .touchUpInside)
-        save.addAction(UIAction { [weak self, weak dialog] _ in
+        let alert = UIAlertController(title: "Rename account", message: account.instanceUrl, preferredStyle: .alert)
+        alert.addTextField { $0.text = account.visibleName }
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Save", style: .default) { [weak self] _ in
             guard let self else { return }
-            let name = field.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let name = alert.textFields?.first?.trimmedText ?? ""
             guard !name.isEmpty else { return }
             Task { [weak self] in
                 guard let self else { return }
                 try? await self.controller.renameAccount(accountId: account.id, displayName: name)
             }
-            dialog?.dismiss(animated: true)
-        }, for: .touchUpInside)
-
-        dialog.setContent(sheetStack([field, buttons], spacing: 14))
-        present(dialog, animated: true)
+        })
+        present(alert, animated: true)
     }
 
     private func presentRemove(_ account: MemosAccount) {
-        let message = UILabel()
-        message.text = "\(account.siteTitle) · \(account.visibleName) will be removed from this device. Memos stored on the server are not deleted."
-        message.font = TextStyle.paragraph
-        message.textColor = Palette.textSecondary
-        message.numberOfLines = 0
-
-        let cancel = TextActionButton(title: "Cancel")
-        let remove = TextActionButton(title: "Remove", primary: true)
-        let buttons = UIStackView(arrangedSubviews: [cancel, remove])
-        buttons.axis = .horizontal
-        buttons.distribution = .fillEqually
-        buttons.spacing = 12
-
-        let dialog = MemosDialogViewController(title: "Remove account?")
-        cancel.addAction(UIAction { [weak dialog] _ in dialog?.dismiss(animated: true) }, for: .touchUpInside)
-        remove.addAction(UIAction { [weak self, weak dialog] _ in
+        let alert = UIAlertController(
+            title: "Remove account?",
+            message: "\(account.siteTitle) · \(account.visibleName) will be removed from this device. Memos stored on the server are not deleted.",
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Remove", style: .destructive) { [weak self] _ in
             guard let self else { return }
             Task { [weak self] in
                 guard let self else { return }
                 try? await self.controller.removeAccount(accountId: account.id)
             }
-            dialog?.dismiss(animated: true)
-        }, for: .touchUpInside)
+        })
+        present(alert, animated: true)
+    }
+}
 
-        dialog.setContent(sheetStack([message, buttons], spacing: 14))
-        present(dialog, animated: true)
+/// A tappable action row with an SF Symbol, used by the account actions menu.
+final class ActionRowView: UIButton {
+    init(icon: String, title: String, destructive: Bool = false, onTap: @escaping () -> Void) {
+        super.init(frame: .zero)
+        var configuration = UIButton.Configuration.plain()
+        configuration.title = title
+        configuration.image = UIImage(systemName: icon)
+        configuration.imagePadding = 14
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 14, leading: 10, bottom: 14, trailing: 10)
+        configuration.baseForegroundColor = destructive ? Palette.danger : Palette.textPrimary
+        self.configuration = configuration
+        contentHorizontalAlignment = .leading
+        addAction(UIAction { _ in onTap() }, for: .touchUpInside)
     }
 
-    @objc private func backdropTapped(_ recognizer: UITapGestureRecognizer) {
-        guard !card.frame.contains(recognizer.location(in: view)) else { return }
-        dismiss(animated: true)
-    }
-
-    @objc private func panned(_ recognizer: UIPanGestureRecognizer) {
-        switch recognizer.state {
-        case .changed:
-            panOffset = max(0, recognizer.translation(in: view).y)
-            card.transform = CGAffineTransform(translationX: 0, y: panOffset)
-        case .ended, .cancelled:
-            if panOffset > 120 {
-                dismiss(animated: true)
-            } else {
-                UIView.animate(withDuration: 0.2) { self.card.transform = .identity }
-            }
-            panOffset = 0
-        default:
-            break
-        }
-    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 }

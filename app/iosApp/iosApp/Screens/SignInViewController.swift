@@ -1,17 +1,18 @@
 import SharedLogic
 import UIKit
 
-/// The full-screen sign-in form, matching the Android `SignInScreen`.
+/// The full-screen sign-in form, matching the Android `SignInScreen` with the
+/// system's own field and button styling.
 final class SignInViewController: UIViewController {
     var onSignedIn: (() -> Void)?
 
     private let controller: MemosTimelineController
     private var observation: IosObservation?
 
-    private let instanceField = DarkTextField(placeholder: "memos.example.com")
-    private let usernameField = DarkTextField(placeholder: "Username")
-    private let passwordField = DarkTextField(placeholder: "Password", secure: true)
-    private let button = PrimaryButton(title: "Sign in")
+    private let instanceField = UITextField.memo(memoPlaceholder: "memos.example.com")
+    private let usernameField = UITextField.memo(memoPlaceholder: "Username")
+    private let passwordField = UITextField.memo(memoPlaceholder: "Password", secure: true)
+    private let button = UIButton(type: .system)
     private let errorLabel = UILabel()
 
     init(controller: MemosTimelineController) {
@@ -40,12 +41,19 @@ final class SignInViewController: UIViewController {
         errorLabel.numberOfLines = 0
         errorLabel.isHidden = true
 
+        var configuration = UIButton.Configuration.filled()
+        configuration.title = "Sign in"
+        configuration.baseBackgroundColor = Palette.accent
+        configuration.cornerStyle = .large
+        configuration.buttonSize = .large
+        button.configuration = configuration
         button.addAction(UIAction { [weak self] _ in self?.signIn() }, for: .touchUpInside)
 
-        let stack = sheetStack(
-            [wordmark, tagline, instanceField, usernameField, passwordField, button, errorLabel],
-            spacing: 12
-        )
+        let stack = UIStackView(arrangedSubviews: [
+            wordmark, tagline, instanceField, usernameField, passwordField, button, errorLabel
+        ])
+        stack.axis = .vertical
+        stack.spacing = 12
         stack.setCustomSpacing(36, after: tagline)
         stack.setCustomSpacing(20, after: passwordField)
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -67,7 +75,7 @@ final class SignInViewController: UIViewController {
 
     private func apply(_ state: MemosAppState) {
         button.isEnabled = !state.isLoading
-        button.setTitle(state.isLoading ? "Connecting…" : "Sign in", for: .normal)
+        button.configuration?.title = state.isLoading ? "Connecting…" : "Sign in"
         if state.activeAccount != nil {
             onSignedIn?()
             return
@@ -79,8 +87,8 @@ final class SignInViewController: UIViewController {
     }
 
     private func signIn() {
-        let instance = instanceField.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let username = usernameField.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let instance = instanceField.trimmedText
+        let username = usernameField.trimmedText
         let password = passwordField.text ?? ""
         // The shared controller rejects blanks with `require`; check here so the
         // user gets a message instead of a thrown error round-trip.

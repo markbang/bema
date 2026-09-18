@@ -1,19 +1,12 @@
 import SharedLogic
 import UIKit
 
-/// The search tab. Mirrors the Android `SearchScreen`: a debounced CEL query
-/// against `listMemos`, with the empty / searching / no-results states.
-final class SearchViewController: UIViewController, UITableViewDataSource, UITableViewDelegate {
-    var onScroll: ((CGFloat) -> Void)?
-    var onOpen: ((Memo) -> Void)?
-    var onOpenImage: ((Memo, Int) -> Void)?
-
-    var topInset: CGFloat = 0 {
-        didSet { fieldTop.constant = topInset }
-    }
-
-    var bottomInset: CGFloat = 0 {
-        didSet { applyBottomInset() }
+/// The search tab. The system search controller owns the field and where it
+/// sits; the debounced CEL query behind it is unchanged.
+final class SearchViewController: ContentListViewController, UISearchResultsUpdating {
+    private enum Item {
+        case loading
+        case memo(Memo)
     }
 
     private let controller: MemosTimelineController
@@ -21,31 +14,41 @@ final class SearchViewController: UIViewController, UITableViewDataSource, UITab
     private var state: MemosAppState?
     private var searchTask: Task<Void, Never>?
 
-    private let field = DarkTextField(placeholder: "Search memos", icon: .search)
-    private let countLabel = UILabel()
-    private let messageLabel = UILabel()
-    private let tableView = UITableView(frame: .zero, style: .plain)
-    private var fieldTop: NSLayoutConstraint!
-
-    private var results: [Memo] = []
+    private let searchController = UISearchController(searchResultsController: nil)
+    private var items: [Item] = []
+    private var query = ""
     private var isSearching = false
     private var searchError: String?
 
     init(controller: MemosTimelineController) {
         self.controller = controller
         super.init(nibName: nil, bundle: nil)
+        tabBarItem = UITabBarItem(
+            title: "Search",
+            image: UIImage(systemName: "magnifyingglass"),
+            selectedImage: UIImage(systemName: "magnifyingglass")
+        )
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = Palette.ink
+        navigationItem.title = "Search"
+        navigationItem.largeTitleDisplayMode = .never
+        searchController.searchResultsUpdater = self
+        searchController.obscuresBackgroundDuringPresentation = false
+        searchController.searchBar.placeholder = "Search memos"
+        searchController.searchBar.searchBarStyle = .minimal
+        searchController.searchBar.tintColor = Palette.accent
+        navigationItem.searchController = searchController
+        navigationItem.hidesSearchBarWhenScrolling = false
+        definesPresentationContext = true
+
         observation = IosInterop.shared.observeState(flow: controller.state) { [weak self] state in
             self?.state = state
             self?.tableView.reloadData()
         }
-        configureViews()
         render()
     }
 
@@ -53,73 +56,16 @@ final class SearchViewController: UIViewController, UITableViewDataSource, UITab
         observation?.cancel()
     }
 
-    private func configureViews() {
-        field.addTarget(self, action: #selector(queryChanged), for: .editingChanged)
-        field.translatesAutoresizingMaskIntoConstraints = false
-
-        countLabel.font = TextStyle.footnote1
-        countLabel.textColor = Palette.textSecondary
-        countLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        messageLabel.font = TextStyle.paragraph
-        messageLabel.textColor = Palette.textSecondary
-        messageLabel.textAlignment = .center
-        messageLabel.numberOfLines = 0
-        messageLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        tableView.backgroundColor = Palette.ink
-        tableView.separatorStyle = .none
-        tableView.rowHeight = UITableView.automaticDimension
-        tableView.estimatedRowHeight = 320
-        tableView.keyboardDismissMode = .interactive
-        tableView.contentInsetAdjustmentBehavior = .never
-        tableView.dataSource = self
-        tableView.delegate = self
-        tableView.register(MemoTweetCell.self, forCellReuseIdentifier: MemoTweetCell.reuseIdentifier)
-        tableView.translatesAutoresizingMaskIntoConstraints = false
-
-        view.addSubview(field)
-        view.addSubview(countLabel)
-        view.addSubview(tableView)
-        view.addSubview(messageLabel)
-
-        fieldTop = field.topAnchor.constraint(equalTo: view.topAnchor, constant: topInset)
-        NSLayoutConstraint.activate([
-            fieldTop,
-            field.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            field.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-
-            countLabel.topAnchor.constraint(equalTo: field.bottomAnchor, constant: 8),
-            countLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            countLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-
-            tableView.topAnchor.constraint(equalTo: countLabel.bottomAnchor, constant: 8),
-            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-
-            messageLabel.centerYAnchor.constraint(equalTo: tableView.centerYAnchor),
-            messageLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 32),
-            messageLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -32)
-        ])
-        applyBottomInset()
-    }
-
-    private func applyBottomInset() {
-        tableView.contentInset.bottom = bottomInset
-        tableView.verticalScrollIndicatorInsets.bottom = bottomInset
-    }
-
-    @objc private func queryChanged() {
-        schedule(field.text ?? "")
+    func updateSearchResults(for searchController: UISearchController) {
+        schedule(searchController.searchBar.text ?? "")
     }
 
     /// Android waits for the keyboard to settle before hitting `listMemos`.
-    private func schedule(_ query: String) {
+    private func schedule(_ text: String) {
         searchTask?.cancel()
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            results = []
+        query = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            items = []
             searchError = nil
             isSearching = false
             render()
@@ -127,17 +73,19 @@ final class SearchViewController: UIViewController, UITableViewDataSource, UITab
         }
         isSearching = true
         searchError = nil
+        items = [.loading]
         render()
         searchTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 400_000_000)
             guard let self, !Task.isCancelled else { return }
             do {
-                let found = try await self.controller.search(query: trimmed)
+                let found = try await self.controller.search(query: self.query)
                 guard !Task.isCancelled else { return }
-                self.results = found
+                self.items = found.map(Item.memo)
             } catch {
                 guard !Task.isCancelled else { return }
                 self.searchError = error.localizedDescription
+                self.items = []
             }
             self.isSearching = false
             self.render()
@@ -145,60 +93,60 @@ final class SearchViewController: UIViewController, UITableViewDataSource, UITab
     }
 
     private func render() {
-        let query = (field.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        messageLabel.isHidden = false
-        countLabel.isHidden = true
-
-        switch true {
-        case query.isEmpty:
-            messageLabel.text = "Search your memos by keyword"
-        case isSearching:
-            messageLabel.text = "Searching…"
-        case searchError != nil:
-            messageLabel.text = searchError
-            messageLabel.textColor = Palette.danger
-        case results.isEmpty:
-            messageLabel.text = "No memos match \"\(query)\""
-        default:
-            messageLabel.isHidden = true
-            countLabel.isHidden = false
-            countLabel.text = "\(results.count) \(results.count == 1 ? "result" : "results")"
+        if let searchError {
+            showPlaceholder(searchError, tint: Palette.danger)
+        } else if query.isEmpty {
+            showPlaceholder("Search your memos by keyword")
+        } else if !isSearching && items.isEmpty {
+            showPlaceholder("No memos match \"\(query)\"")
+        } else {
+            clearPlaceholder()
         }
-        if searchError == nil { messageLabel.textColor = Palette.textSecondary }
+        navigationItem.prompt = items.isEmpty ? nil : "\(items.count) \(items.count == 1 ? "result" : "results")"
         tableView.reloadData()
     }
 
-    func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        onScroll?(scrollView.contentOffset.y + scrollView.adjustedContentInset.top)
+    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        items.count
     }
 
-    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        guard !isSearching, searchError == nil, !(field.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return 0
-        }
-        return results.count
-    }
-
-    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let cell = tableView.dequeueReusableCell(withIdentifier: MemoTweetCell.reuseIdentifier, for: indexPath) as! MemoTweetCell
-        guard indexPath.row < results.count else { return cell }
-        let memo = results[indexPath.row]
-        cell.configure(
-            memo: memo,
-            user: state?.userProfiles[username(of: memo.creator)],
-            controller: controller,
-            liked: memo.isLikedBy(account: state?.activeAccount),
-            actions: MemoActions(
-                open: { [weak self] in self?.onOpen?(memo) },
-                // Android routes Reply to open here rather than to the composer.
-                reply: { [weak self] in self?.onOpen?(memo) },
-                react: { [weak self] in
-                    guard let self else { return }
-                    Task { try? await self.controller.react(memo: memo, reactionType: heartReaction) }
-                },
-                openImage: { [weak self] index in self?.onOpenImage?(memo, index) }
+    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        guard indexPath.row < items.count else { return UITableViewCell() }
+        switch items[indexPath.row] {
+        case .loading:
+            return tableView.dequeueReusableCell(withIdentifier: LoadingCell.reuseIdentifier, for: indexPath)
+        case .memo(let memo):
+            let cell = tableView.dequeueReusableCell(withIdentifier: MemoTweetCell.reuseIdentifier, for: indexPath) as! MemoTweetCell
+            cell.configure(
+                memo: memo,
+                user: state?.userProfiles[username(of: memo.creator)],
+                controller: controller,
+                liked: memo.isLikedBy(account: state?.activeAccount),
+                actions: MemoActions(
+                    open: { [weak self] in self?.openMemo(memo, startComment: false) },
+                    // Android routes Reply to open here rather than to a composer.
+                    reply: { [weak self] in self?.openMemo(memo, startComment: false) },
+                    react: { [weak self] in
+                        guard let self else { return }
+                        Task { try? await self.controller.react(memo: memo, reactionType: heartReaction) }
+                    },
+                    openImage: { [weak self] index in self?.openImage(memo: memo, index: index) }
+                )
             )
+            return cell
+        }
+    }
+
+    private func openMemo(_ memo: Memo, startComment: Bool) {
+        navigationController?.pushViewController(
+            MemoDetailViewController(controller: controller, memoName: memo.name, startComment: startComment),
+            animated: true
         )
-        return cell
+    }
+
+    private func openImage(memo: Memo, index: Int) {
+        let viewer = ImageViewerViewController(controller: controller, memo: memo, startIndex: index)
+        viewer.modalPresentationStyle = .fullScreen
+        present(viewer, animated: true)
     }
 }

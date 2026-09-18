@@ -20,7 +20,6 @@ enum TextStyle {
     static let title1 = UIFont.systemFont(ofSize: 32)
     static let title2 = UIFont.systemFont(ofSize: 24)
     static let title3 = UIFont.systemFont(ofSize: 20)
-    static let title4 = UIFont.systemFont(ofSize: 18)
     static let headline1 = UIFont.systemFont(ofSize: 17)
     static let paragraph = UIFont.systemFont(ofSize: 17)
     static let body1 = UIFont.systemFont(ofSize: 16)
@@ -31,15 +30,10 @@ enum TextStyle {
 }
 
 enum Metrics {
-    static let headerMinimumHeight: CGFloat = 56
     static let avatarSize: CGFloat = 46
-    static let headerAvatarSize: CGFloat = 40
-    static let bottomNavHeight: CGFloat = 56
-    static let fabSize: CGFloat = 56
     static let mediaWidth: CGFloat = 260
     static let mediaHeight: CGFloat = 210
     static let mediaCornerRadius: CGFloat = 16
-    static let corner: CGFloat = 12
 }
 
 extension UIColor {

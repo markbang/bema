@@ -43,6 +43,48 @@ func presentError(_ message: String, from viewController: UIViewController) {
     (viewController.presentedViewController ?? viewController).present(alert, animated: true)
 }
 
+extension UIViewController {
+    /// Presents `root` inside a sheet with the given detents, which is also what
+    /// provides the grabber and drag-to-dismiss.
+    func presentSheet(
+        _ root: UIViewController,
+        detents: [UISheetPresentationController.Detent] = [.medium(), .large()]
+    ) {
+        root.navigationItem.rightBarButtonItem = root.navigationItem.rightBarButtonItem ?? UIBarButtonItem(
+            systemItem: .close,
+            primaryAction: UIAction { [weak root] _ in root?.dismiss(animated: true) }
+        )
+        let navigation = UINavigationController(rootViewController: root)
+        if let sheet = navigation.sheetPresentationController {
+            sheet.detents = detents
+            sheet.prefersGrabberVisible = true
+            sheet.preferredCornerRadius = 20
+        }
+        present(navigation, animated: true)
+    }
+}
+
+extension UITextField {
+    /// An iOS-styled field for the sign-in and settings forms.
+    static func memo(memoPlaceholder: String, text: String = "", secure: Bool = false) -> UITextField {
+        let field = UITextField()
+        field.placeholder = memoPlaceholder
+        field.text = text
+        field.isSecureTextEntry = secure
+        field.borderStyle = .roundedRect
+        field.font = .preferredFont(forTextStyle: .body)
+        field.autocapitalizationType = .none
+        field.autocorrectionType = .no
+        field.clearButtonMode = .whileEditing
+        field.translatesAutoresizingMaskIntoConstraints = false
+        return field
+    }
+
+    var trimmedText: String {
+        (text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 /// Stands in for the Android `Toast` that confirms a copied link.
 func showToast(_ message: String) {
     guard let window = UIApplication.shared.connectedScenes
