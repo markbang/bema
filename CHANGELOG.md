@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.0.4](https://github.com/markbang/bema/compare/v0.0.3...v0.0.4) (2026-09-18)
+
+
+### Features
+
+* **android:** collapse the timeline chrome and pick settings ([0fc63b7](https://github.com/markbang/bema/commit/0fc63b74bcda652fa42443248b52c4ddc67a9499))
+* **android:** wire post actions, likes, and an image viewer ([0663637](https://github.com/markbang/bema/commit/0663637a9f9774136579bb92714b9908582007b7))
+* **ios:** rebuild the UI on SharedLogic ([ebc53b5](https://github.com/markbang/bema/commit/ebc53b51a0ed4110e024439b4deca68b0260f159))
+* **ios:** render the miuix icons as vectors ([bb2f38c](https://github.com/markbang/bema/commit/bb2f38cb8c60e074a3dc4c192dd8f631df4209b1))
+* **shared:** make the suspend API and byte buffers usable from Swift ([d831a70](https://github.com/markbang/bema/commit/d831a70516a94b1faa893a816916ef7d901a0e18))
+* **shared:** share like state, timestamps and settings options ([72b7692](https://github.com/markbang/bema/commit/72b76929d14c2b764b077549b8b0d904ee53b59b))
+* **theme:** add a light/dark preference shared by both apps ([6411117](https://github.com/markbang/bema/commit/6411117dd0ba482efbb0294f5245bf22bb9e590e))
+* **update:** prompt for a newer APK from the release catalog ([28ad521](https://github.com/markbang/bema/commit/28ad52166078531de1dbf42c991a8e47418c43f6))
+
+
+### Bug Fixes
+
+* **ios:** import the framework in the app delegate and fix two initializers ([80c12a6](https://github.com/markbang/bema/commit/80c12a6d66d1974152777cb6dbaa623f08fadc92))
+* **ios:** import the shared framework and give the custom views an init ([3e71e67](https://github.com/markbang/bema/commit/3e71e677f220afd96e1dda95baa95a01150c0b38))
+* **ios:** keep shared storage encrypted ([b640387](https://github.com/markbang/bema/commit/b6403878c793bcd3a1b3657e8b57dfafcf7a0d39))
+* **ios:** pass the control event when removing the newer-memos action ([6a94217](https://github.com/markbang/bema/commit/6a94217a0285df2c5cb848714577b8b28aad5e48))
+* **ios:** resolve the remaining compile errors ([6ac95a5](https://github.com/markbang/bema/commit/6ac95a534e2d8e607e929337246271601d2c216d))
+* **ios:** unwrap self before the async call and use the action-based bar item ([aba4aae](https://github.com/markbang/bema/commit/aba4aaef771d121274460ffe244b3bddc9ad3c71))
+* **ios:** use the generated name for the visibility enum entries ([591ed8d](https://github.com/markbang/bema/commit/591ed8d85115759bde2bfc5fa89e9cdd85ea0608))
+* **shared:** opt in to the foreign API in the iOS key-value store ([0484624](https://github.com/markbang/bema/commit/0484624e06b2b9e07c772580dd079110ebf6ef4a))
+
 ## [0.0.3](https://github.com/markbang/bema/compare/v0.0.2...v0.0.3) (2026-09-17)
 
 
