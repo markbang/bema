@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.0.5](https://github.com/markbang/bema/compare/v0.0.4...v0.0.5) (2026-09-18)
+
+
+### Features
+
+* **release:** name release APKs bema-v&lt;version&gt;-android-&lt;abi&gt;.apk ([5dd7cfc](https://github.com/markbang/bema/commit/5dd7cfc3308949d8949771e2485a61b373e75094))
+* **update:** use the app-scoped catalog on the update host ([e6fdcd4](https://github.com/markbang/bema/commit/e6fdcd4c9689deea78585fcc7792492f7e35251f))
+
+
+### Bug Fixes
+
+* **ios:** read the initial theme through a typed accessor ([2d1b037](https://github.com/markbang/bema/commit/2d1b03779dfb3d5ce3937796b437b5f54cec165f))
+* repair the memo link and the comment request body ([459c3ce](https://github.com/markbang/bema/commit/459c3ced80b11eeb019a335588e0c76469428ea3))
+* send the memo name when upserting a reaction ([4de461e](https://github.com/markbang/bema/commit/4de461e48a5954038874999b304e313c7f7b6f8a))
+
 ## [0.0.4](https://github.com/markbang/bema/compare/v0.0.3...v0.0.4) (2026-09-18)
 
 
