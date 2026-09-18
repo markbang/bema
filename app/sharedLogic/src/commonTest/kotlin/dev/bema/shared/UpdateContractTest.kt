@@ -1,8 +1,8 @@
 package dev.bema.shared
 
-import dev.bema.shared.data.update.ApkEntry
 import dev.bema.shared.data.update.AppVersion
-import dev.bema.shared.data.update.ReleaseNote
+import dev.bema.shared.data.update.CatalogApk
+import dev.bema.shared.data.update.CatalogRelease
 import dev.bema.shared.data.update.selectUpdate
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -11,12 +11,28 @@ import kotlin.test.assertTrue
 
 class UpdateContractTest {
 
+    private val current = AppVersion.parse("0.0.2")!!
+
     private fun apk(
-        version: String,
         arch: String = "arm64-v8a",
         status: String = "Available",
-        url: String = "https://mobile.talesofai.com/apk/cohub-v$version-android-$arch.apk"
-    ) = ApkEntry(version = version, arch = arch, size = 1024, sha256 = "a".repeat(64), url = url, status = status)
+        downloadUrl: String = "https://mobile.talesofai.com/apk/memos/id-$arch.apk",
+        sizeBytes: Long? = 1024
+    ) = CatalogApk(
+        arch = arch,
+        sizeBytes = sizeBytes,
+        sha256 = "a".repeat(64),
+        downloadUrl = downloadUrl,
+        status = status
+    )
+
+    private fun release(
+        version: String,
+        apks: List<CatalogApk>,
+        title: String? = "Release $version",
+        notes: String? = "Notes for $version",
+        releaseUrl: String? = "https://github.com/markbang/bema/releases/tag/v$version"
+    ) = CatalogRelease(version = version, title = title, notes = notes, releaseUrl = releaseUrl, apks = apks)
 
     @Test
     fun parsesTheVersionFormsThePipelineCanProduce() {
@@ -41,85 +57,84 @@ class UpdateContractTest {
     }
 
     @Test
-    fun picksTheNewestEntryForThisAbiAndJoinsItsNotes() {
+    fun picksTheNewestReleaseWithThisArchitectureAndCarriesItsNotes() {
         val update = selectUpdate(
-            current = AppVersion.parse("0.0.2")!!,
+            current = current,
             abi = "arm64-v8a",
             skipped = null,
-            apks = listOf(apk("0.0.3"), apk("0.0.4", arch = "x86_64")),
-            releases = listOf(ReleaseNote(version = "0.0.3", title = "March", notes = "- fixed things", releaseUrl = "https://example.test/v0.0.3"))
+            releases = listOf(
+                release("0.0.4", listOf(apk("x86_64"))),
+                release("0.0.3", listOf(apk("arm64-v8a"), apk("x86")))
+            )
         )
 
         assertEquals("0.0.3", update?.version)
-        assertEquals("March", update?.title)
-        assertEquals("- fixed things", update?.notes)
-        assertEquals("https://example.test/v0.0.3", update?.releaseUrl)
-        assertEquals("https://mobile.talesofai.com/apk/cohub-v0.0.3-android-arm64-v8a.apk", update?.downloadUrl)
+        assertEquals("Release 0.0.3", update?.title)
+        assertEquals("Notes for 0.0.3", update?.notes)
+        assertEquals("https://github.com/markbang/bema/releases/tag/v0.0.3", update?.releaseUrl)
+        assertEquals("https://mobile.talesofai.com/apk/memos/id-arm64-v8a.apk", update?.downloadUrl)
+        assertEquals(1024, update?.sizeBytes)
     }
 
     @Test
-    fun returnsNothingWhenNoEntryIsNewer() {
+    fun returnsNothingWhenNoVersionIsNewer() {
         assertNull(
-            selectUpdate(
-                current = AppVersion.parse("0.0.2")!!,
-                abi = "arm64-v8a",
-                skipped = null,
-                apks = listOf(apk("0.0.1"), apk("0.0.2")),
-                releases = emptyList()
-            )
+            selectUpdate(current, "arm64-v8a", null, listOf(release("0.0.1", listOf(apk())), release("0.0.2", listOf(apk()))))
         )
     }
 
     @Test
-    fun aMissingAbiYieldsNoUpdateRatherThanAnotherArchitecture() {
-        assertNull(
-            selectUpdate(
-                current = AppVersion.parse("0.0.2")!!,
-                abi = "arm64-v8a",
-                skipped = null,
-                apks = listOf(apk("0.0.3", arch = "x86_64")),
-                releases = emptyList()
-            )
-        )
+    fun aReleaseWithoutThisArchitectureIsSkippedNotSubstituted() {
+        assertNull(selectUpdate(current, "arm64-v8a", null, listOf(release("0.0.3", listOf(apk("x86_64"))))))
     }
 
     @Test
     fun skippingSuppressesOnlyTheSkippedVersion() {
-        val apks = listOf(apk("0.0.3"), apk("0.0.4"))
+        val releases = listOf(release("0.0.4", listOf(apk())), release("0.0.3", listOf(apk())))
 
-        assertEquals(
-            "0.0.4",
-            selectUpdate(AppVersion.parse("0.0.2")!!, "arm64-v8a", AppVersion.parse("0.0.3"), apks, emptyList())?.version
-        )
+        assertEquals("0.0.4", selectUpdate(current, "arm64-v8a", AppVersion.parse("0.0.3"), releases)?.version)
+        assertEquals("0.0.3", selectUpdate(current, "arm64-v8a", AppVersion.parse("0.0.4"), releases)?.version)
         assertNull(
-            selectUpdate(AppVersion.parse("0.0.2")!!, "arm64-v8a", AppVersion.parse("0.0.4"), listOf(apk("0.0.4")), emptyList())
+            selectUpdate(current, "arm64-v8a", AppVersion.parse("0.0.4"), listOf(release("0.0.4", listOf(apk()))))
         )
     }
 
     @Test
-    fun ignoresEntriesThatAreNotDownloadable() {
+    fun ignoresArtifactsThatAreNotDownloadable() {
         assertNull(
             selectUpdate(
-                current = AppVersion.parse("0.0.2")!!,
-                abi = "arm64-v8a",
-                skipped = null,
-                apks = listOf(apk("0.0.3", status = "Pending"), apk("0.0.4", url = "")),
-                releases = emptyList()
+                current,
+                "arm64-v8a",
+                null,
+                listOf(release("0.0.3", listOf(apk(status = "Pending"), apk(downloadUrl = ""))))
             )
         )
     }
 
     @Test
-    fun anUnpublishedReleaseStillPromptsForItsApk() {
+    fun anUnknownSizeDoesNotHideTheUpdate() {
+        val update = selectUpdate(current, "arm64-v8a", null, listOf(release("0.0.3", listOf(apk(sizeBytes = null)))))
+
+        assertEquals("0.0.3", update?.version)
+        assertEquals(0, update?.sizeBytes)
+    }
+
+    @Test
+    fun aReleaseWithoutNotesStillPromptsForItsApk() {
         val update = selectUpdate(
-            current = AppVersion.parse("0.0.2")!!,
-            abi = "arm64-v8a",
-            skipped = null,
-            apks = listOf(apk("0.0.3")),
-            releases = emptyList()
+            current,
+            "arm64-v8a",
+            null,
+            listOf(release("0.0.3", listOf(apk()), title = null, notes = null, releaseUrl = null))
         )
 
         assertEquals("0.0.3", update?.version)
         assertNull(update?.notes)
+        assertNull(update?.releaseUrl)
+    }
+
+    @Test
+    fun aReleaseWithNoArtifactsIsIgnored() {
+        assertNull(selectUpdate(current, "arm64-v8a", null, listOf(release("0.0.3", emptyList()))))
     }
 }

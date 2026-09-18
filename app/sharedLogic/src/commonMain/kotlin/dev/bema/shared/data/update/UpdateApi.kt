@@ -5,6 +5,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.get
+import io.ktor.client.request.parameter
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -21,39 +22,36 @@ data class AvailableUpdate(
 )
 
 @Serializable
-private data class ApkCatalog(val apks: List<ApkEntry> = emptyList())
+private data class ApkCatalog(val releases: List<CatalogRelease> = emptyList())
 
 @Serializable
-internal data class ApkEntry(
-    val version: String = "",
-    val arch: String = "",
-    val size: Long = 0,
-    val sha256: String = "",
-    val url: String = "",
-    val status: String = ""
-)
-
-@Serializable
-private data class ReleaseFeed(val releases: List<ReleaseNote> = emptyList())
-
-@Serializable
-internal data class ReleaseNote(
+internal data class CatalogRelease(
     val version: String = "",
     val title: String? = null,
     val notes: String? = null,
-    val releaseUrl: String? = null
+    val releaseUrl: String? = null,
+    val publishedAt: String? = null,
+    val apks: List<CatalogApk> = emptyList()
+)
+
+@Serializable
+internal data class CatalogApk(
+    val arch: String = "",
+    val sizeBytes: Long? = null,
+    val sha256: String = "",
+    val downloadUrl: String = "",
+    val status: String = ""
 )
 
 /**
- * Reads the public APK catalog on the update host.
+ * Reads the app-scoped APK catalog on the update host.
  *
- * Both endpoints are unauthenticated: `/api/apks` lists the per-ABI artifacts and
- * `/api/apk-releases` carries the release notes, joined on the version string.
- * Neither takes an `app_id`, deliberately — the deployed catalog defaults to the
- * `cohub-mobile` scope the release pipeline publishes into, and that default is
- * what keeps this readable without credentials. The publishing token in
- * `.github/workflows/release.yml` must never be shipped here: it can upload for
- * every application on the host.
+ * One request returns every published release for [APP_ID], each with its notes
+ * and its per-ABI artifacts. The catalog is public; the publishing token in
+ * `.github/workflows/release.yml` must never be shipped here, because it can
+ * upload for every application on the host.
+ *
+ * `app_id` is required by the host — it answers 400 without it.
  */
 class UpdateApi(
     private val baseUrl: String = DEFAULT_BASE_URL,
@@ -71,23 +69,27 @@ class UpdateApi(
         abi: String,
         skipped: AppVersion? = null
     ): AvailableUpdate? {
-        val catalog: ApkCatalog = httpClient.get("$baseUrl/api/apks").body()
-        val feed: ReleaseFeed = httpClient.get("$baseUrl/api/apk-releases").body()
-        return selectUpdate(current, abi, skipped, catalog.apks, feed.releases)
+        val catalog: ApkCatalog = httpClient.get("$baseUrl/api/apk/catalog") {
+            parameter("app_id", APP_ID)
+        }.body()
+        return selectUpdate(current, abi, skipped, catalog.releases)
     }
 
     companion object {
         const val DEFAULT_BASE_URL = "https://mobile.talesofai.com"
+
+        /** Must match the `app_id` the release workflow publishes under. */
+        const val APP_ID = "memos"
     }
 }
 
 /**
- * Picks the newest entry in [apks] that is newer than [current] and built for
- * [abi], then attaches the matching [releases] entry as the notes.
+ * Picks the newest release in [releases] that is newer than [current] and ships an
+ * artifact for [abi], then carries its notes into the result.
  *
- * Split APKs carry no manifest ABI restriction, so a mismatched one installs and
- * then fails to load its native library — an ABI with no entry yields no update
- * rather than a fallback to another architecture.
+ * A version whose artifacts cover only other architectures is skipped rather than
+ * offering a mismatched APK: a split APK carries no manifest ABI restriction, so a
+ * foreign one installs and then fails to load its native library.
  *
  * Skipping suppresses exactly the skipped version: the next release prompts again.
  */
@@ -95,24 +97,26 @@ internal fun selectUpdate(
     current: AppVersion,
     abi: String,
     skipped: AppVersion?,
-    apks: List<ApkEntry>,
-    releases: List<ReleaseNote>
+    releases: List<CatalogRelease>
 ): AvailableUpdate? {
-    val (version, entry) = apks
-        .asSequence()
-        .filter { it.status == "Available" && it.arch == abi && it.url.isNotBlank() }
-        .mapNotNull { candidate -> AppVersion.parse(candidate.version)?.let { it to candidate } }
+    val (version, release, apk) = releases
+        .mapNotNull { release -> AppVersion.parse(release.version)?.let { it to release } }
         .filter { (version, _) -> version > current && version != skipped }
-        .maxByOrNull { (version, _) -> version }
+        .sortedByDescending { (version, _) -> version }
+        .firstNotNullOfOrNull { (version, release) ->
+            release.apks
+                .firstOrNull { it.status == "Available" && it.arch == abi && it.downloadUrl.isNotBlank() }
+                ?.let { Triple(version, release, it) }
+        }
         ?: return null
-    val note = releases.firstOrNull { it.version == entry.version }
+
     return AvailableUpdate(
         version = version.toString(),
-        title = note?.title,
-        notes = note?.notes,
-        downloadUrl = entry.url,
-        sha256 = entry.sha256,
-        sizeBytes = entry.size,
-        releaseUrl = note?.releaseUrl
+        title = release.title,
+        notes = release.notes,
+        downloadUrl = apk.downloadUrl,
+        sha256 = apk.sha256,
+        sizeBytes = apk.sizeBytes ?: 0,
+        releaseUrl = release.releaseUrl
     )
 }

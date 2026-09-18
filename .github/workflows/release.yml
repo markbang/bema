@@ -105,10 +105,9 @@ jobs:
             app/androidApp/build/outputs/apk/release/*.apk \
             --clobber
 
-      # Publishes the APKs to the update host the app checks on launch.
-      # Reading that catalog is public; writing needs the publishing token, and the
-      # release notes have to ride along because the legacy contract the app reads
-      # is the only path that stores them.
+      # Publishes the APKs to the update host the app checks on launch. The catalog
+      # the app reads is public; publishing needs the token. `app_id` must match
+      # UpdateApi.APP_ID.
       - name: Publish to the update host
         if: github.ref_type == 'tag'
         env:
@@ -121,34 +120,29 @@ jobs:
             exit 1
           fi
           host="https://mobile.talesofai.com"
+          app_id="memos"
           version="$(cat version.txt)"
           release="$(gh release view "$GITHUB_REF_NAME" --json name,body,url)"
           title="$(jq -r '.name // ""' <<<"$release")"
           notes="$(jq -r '.body // ""' <<<"$release")"
           release_url="$(jq -r '.url' <<<"$release")"
 
-          # The four real ABI splits. `universal` is skipped on purpose: the catalog
-          # only accepts arm64-v8a/armeabi-v7a/x86/x86_64, and the app picks the
-          # entry matching Build.SUPPORTED_ABIS.
+          # The four real ABI splits; `universal` stays a GitHub Release asset only,
+          # because the app selects the entry for its own ABI.
           for arch in arm64-v8a armeabi-v7a x86 x86_64; do
             apk="app/androidApp/build/outputs/apk/release/androidApp-${arch}-release.apk"
-            size="$(stat -c%s "$apk")"
             sha256="$(sha256sum "$apk" | cut -d' ' -f1)"
-            upload_url="$(curl -fsS -X POST "$host/api/apks/presign" \
+            shape=(--form-string "version=$version" --form-string "arch=$arch" --form-string "sha256=$sha256")
+            # Omitted fields are stored as null, which is what the app expects for a
+            # release published without notes.
+            if [ -n "$title" ]; then shape+=(--form-string "title=$title"); fi
+            if [ -n "$notes" ]; then shape+=(--form-string "notes=$notes"); fi
+            if [ -n "$release_url" ]; then shape+=(--form-string "release_url=$release_url"); fi
+            curl -fsS -X POST "$host/ota-publish/apks?app_id=$app_id" \
               -H "x-ota-api-key: $YAOTA_PUBLISH_TOKEN" \
-              -H 'content-type: application/json' \
-              -d "$(jq -n --arg v "$version" --arg a "$arch" --arg s "$sha256" --argjson bytes "$size" \
-                        --arg t "$title" --arg d "$notes" --arg u "$release_url" \
-                        '{version: $v, arch: $a, sha256: $s, size: $bytes,
-                          title: ($t | if . == "" then null else . end),
-                          notes: ($d | if . == "" then null else . end),
-                          releaseUrl: ($u | if . == "" then null else . end)}')" \
-              | jq -r '.uploadUrl')"
-            curl -fsS -X PUT "$upload_url" \
-              -H "x-ota-api-key: $YAOTA_PUBLISH_TOKEN" \
-              -H 'content-type: application/vnd.android.package-archive' \
-              --data-binary "@$apk" > /dev/null
-            echo "published $arch for $version ($size bytes)"
+              "${shape[@]}" \
+              -F "file=@$apk;type=application/vnd.android.package-archive" > /dev/null
+            echo "published $arch for $version ($(stat -c%s "$apk") bytes)"
           done
 
   ios:
