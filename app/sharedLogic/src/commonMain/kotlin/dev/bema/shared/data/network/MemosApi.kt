@@ -5,6 +5,7 @@ import dev.bema.shared.data.model.BatchGetUsersRequest
 import dev.bema.shared.data.model.BatchGetUsersResponse
 import dev.bema.shared.data.model.InstanceSetting
 import dev.bema.shared.data.model.CreateMemoShareRequestBody
+import dev.bema.shared.data.model.CreateCommentBody
 import dev.bema.shared.data.model.CurrentUserResponse
 import dev.bema.shared.data.model.InstanceProfile
 import dev.bema.shared.data.model.LinkMetadata
@@ -315,7 +316,7 @@ class MemosApi(
             httpClient.post {
                 url { api(name, "comments") }
                 auth(token)
-                jsonBody(MemoInput(content = content, visibility = visibility))
+                jsonBody(CreateCommentBody(comment = MemoInput(content = content, visibility = visibility)))
             }
         }.body()
 

@@ -1,12 +1,15 @@
 package dev.bema.shared
 
+import dev.bema.shared.data.model.CreateCommentBody
 import dev.bema.shared.data.model.Memo
+import dev.bema.shared.data.model.MemoInput
 import dev.bema.shared.data.model.PasswordCredentials
 import dev.bema.shared.data.model.SignInRequest
 import dev.bema.shared.data.model.Visibility
 import dev.bema.shared.data.network.PersistentCookieStorage
 import dev.bema.shared.data.network.normalizeInstanceUrl
 import dev.bema.shared.data.storage.KeyValueStore
+import dev.bema.shared.data.session.memoWebUrl
 import io.ktor.http.Cookie
 import io.ktor.http.Url
 import kotlinx.coroutines.runBlocking
@@ -86,6 +89,32 @@ class MemosContractTest {
         val decoded = json.decodeFromString<dev.bema.shared.data.model.ListMemosResponse>(snapshot)
         assertEquals("abc", decoded.memos.single().uid)
         assertEquals("tok-2", decoded.nextPageToken)
+    }
+
+    @Test
+    fun commentRequestsNestTheMemoUnderComment() {
+        // CreateMemoComment binds the entire request (body: "*"), so a bare memo is
+        // rejected. CreateMemo binds body: "memo" and does take one directly, which
+        // is why only comments were broken.
+        val encoded = json.encodeToString(CreateCommentBody(MemoInput("nice", Visibility.PUBLIC)))
+
+        assertEquals("""{"comment":{"content":"nice","visibility":"PUBLIC"}}""", encoded)
+    }
+
+    @Test
+    fun memoWebUrlIsTheResourceNameUnderTheInstance() {
+        // The web router serves memos at `memos/:uid`, i.e. the memo's own resource
+        // name; there is no `/m/<uid>` route.
+        val memo = Memo(name = "memos/gGnv799PLSgibqLkV78sUH", creator = "users/lin", content = "hi")
+
+        assertEquals(
+            "https://s.bangwu.top/memos/gGnv799PLSgibqLkV78sUH",
+            memoWebUrl("https://s.bangwu.top/", memo)
+        )
+        assertEquals(
+            "https://s.bangwu.top/memos/gGnv799PLSgibqLkV78sUH",
+            memoWebUrl("https://s.bangwu.top", memo)
+        )
     }
 }
 

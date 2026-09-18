@@ -39,3 +39,12 @@ fun formatMemoTime(instant: Instant?): String = instant
     ?.removeSuffix("Z")
     ?.take(5)
     .orEmpty()
+
+/**
+ * The URL a memo is reachable at in the instance's web UI.
+ *
+ * Memos routes a memo at its own resource name (`memos/:uid` in the web router),
+ * so the path is the full `name`. There is no `/m/<uid>` route.
+ */
+fun memoWebUrl(instanceUrl: String, memo: Memo): String =
+    "${instanceUrl.trimEnd('/')}/${memo.name}"

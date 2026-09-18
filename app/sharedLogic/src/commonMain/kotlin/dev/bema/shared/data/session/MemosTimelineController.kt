@@ -494,7 +494,7 @@ class MemosTimelineController(
 
     override fun memoUrl(memo: Memo): String {
         val account = _state.value.activeAccount ?: return ""
-        return "${account.instanceUrl.trimEnd('/')}/m/${memo.uid}"
+        return memoWebUrl(account.instanceUrl, memo)
     }
 
     fun memoCreator(memo: Memo): User? = _state.value.userProfiles[memo.creator.substringAfterLast('/')]

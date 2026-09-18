@@ -190,6 +190,18 @@ data class UpsertReactionBody(
     val reaction: ReactionInput
 )
 
+/**
+ * Body of `POST /api/v1/memos/{memo}/comments`, whose binding is `body: "*"`.
+ *
+ * That is the whole `CreateMemoCommentRequest`, so the memo has to sit under
+ * `comment` — unlike `POST /api/v1/memos`, which binds its body to the `memo`
+ * field and therefore takes a bare memo.
+ */
+@Serializable
+data class CreateCommentBody(
+    val comment: MemoInput
+)
+
 @Serializable
 data class MemoShare(
     val name: String = "",
