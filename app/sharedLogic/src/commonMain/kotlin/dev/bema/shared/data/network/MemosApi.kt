@@ -44,6 +44,7 @@ import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsBytes
 import io.ktor.client.statement.bodyAsText
+import io.ktor.client.statement.request
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.URLBuilder
@@ -51,12 +52,18 @@ import io.ktor.http.appendPathSegments
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import io.ktor.http.takeFrom
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import io.ktor.serialization.kotlinx.json.json
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
-import io.ktor.serialization.kotlinx.json.json
+import kotlin.time.Clock
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
+
+/** Refresh this long before the access token lapses. */
+private val TOKEN_REFRESH_MARGIN = 60.seconds
 
 class MemosApiException(
     val status: HttpStatusCode,
@@ -68,6 +75,7 @@ class MemosApi(
     instanceUrl: String,
     private val accessTokenProvider: suspend () -> String?,
     private val refreshAccessToken: suspend () -> String?,
+    private val accessTokenExpiresAt: () -> Instant? = { null },
     private val onUnauthorized: suspend () -> Unit = {},
     rawHttpClient: HttpClient = createPlatformHttpClient(),
     cookieStorage: CookiesStorage = AcceptAllCookiesStorage()
@@ -87,8 +95,15 @@ class MemosApi(
     }
 
     private suspend fun request(block: suspend (String?) -> HttpResponse): HttpResponse {
-        val existingToken = accessTokenProvider()
-        val token = existingToken.takeUnless { it.isNullOrBlank() } ?: refreshMutex.withLock { refreshAccessToken() }
+        // Refresh ahead of expiry rather than after a 401: the access token is short
+        // lived, and letting it lapse turns the next tap into a visible failure.
+        val current = accessTokenProvider()
+        val expiring = accessTokenExpiresAt()?.let { it <= Clock.System.now() + TOKEN_REFRESH_MARGIN } == true
+        val token = if (current.isNullOrBlank() || expiring) {
+            refreshMutex.withLock { refreshAccessToken() } ?: current
+        } else {
+            current
+        }
         val first = block(token)
         if (first.status != HttpStatusCode.Unauthorized) {
             return first.requireSuccess()
@@ -105,13 +120,16 @@ class MemosApi(
 
     private suspend fun HttpResponse.requireSuccess(): HttpResponse {
         if (!status.isSuccess()) {
-            // Surface what the server said: the status alone sent us guessing at
-            // request shapes more than once.
+            // Name the request and repeat what the server said: a bare status left us
+            // guessing at request shapes more than once.
+            val where = "${this.request.method.value} ${this.request.url.encodedPath}"
             val detail = runCatching { bodyAsText() }.getOrNull().orEmpty().trim()
             throw MemosApiException(
                 status,
-                "Memos API request failed: ${status.value} ${status.description}" +
-                    if (detail.isEmpty()) "" else " — ${detail.take(400)}"
+                buildString {
+                    append("$where failed: ${status.value} ${status.description}")
+                    if (detail.isNotEmpty()) append(" — ${detail.take(400)}")
+                }
             )
         }
         return this
@@ -340,7 +358,7 @@ class MemosApi(
             httpClient.post {
                 url { api(name, "reactions") }
                 auth(token)
-                jsonBody(UpsertReactionBody(reaction = ReactionInput(reactionType)))
+                jsonBody(UpsertReactionBody(name = name, reaction = ReactionInput(reactionType)))
             }
         }.body()
 

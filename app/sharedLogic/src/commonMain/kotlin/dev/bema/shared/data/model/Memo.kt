@@ -187,15 +187,16 @@ data class ReactionInput(
 )
 
 /**
- * Body of `POST /api/v1/memos/{memo}/reactions`, whose binding is `body: "*"`.
+ * Body of `POST /api/v1/memos/{memo}/reactions`.
  *
- * The request message has a `name`, but it is bound from the path, so the body
- * carries only the reaction. Verified against a local Memos: sending `name` here
- * is accepted too, but sending nothing but the reaction is what the server's own
- * web client does.
+ * `name` is sent even though the path template also carries it: the server's own
+ * web client sends both, and instances that do not bind the path parameter onto a
+ * `body: "*"` request answer `400 invalid memo name` when it is missing. A Memos
+ * that does bind it accepts the duplicate.
  */
 @Serializable
 data class UpsertReactionBody(
+    val name: String,
     val reaction: ReactionInput
 )
 

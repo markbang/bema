@@ -646,17 +646,20 @@ class MemosTimelineController(
 
     private inner class AccountSession(private val account: MemosAccount) {
         private var accessToken: String? = null
+        private var accessTokenExpiresAt: Instant? = null
         private val cookieStorage = PersistentCookieStorage("memos.cookies.${account.id}", keyValueStore)
         val api: MemosApi = MemosApi(
             instanceUrl = account.instanceUrl,
             accessTokenProvider = { accessToken },
             refreshAccessToken = { refreshToken() },
-            onUnauthorized = { _state.update { it.copy(error = "Session expired for ${account.username}") } },
+            accessTokenExpiresAt = { accessTokenExpiresAt },
+            onUnauthorized = { _state.update { it.copy(error = "Session expired for ${account.username} — sign in again") } },
             cookieStorage = cookieStorage
         )
 
         suspend fun signIn(username: String, password: String) = api.signIn(username, password).also {
             accessToken = it.accessToken
+            accessTokenExpiresAt = it.accessTokenExpiresAt
         }
 
         suspend fun loadBranding(): Pair<String, String> = runCatching {
@@ -672,6 +675,7 @@ class MemosTimelineController(
         suspend fun refreshToken(): String? = runCatching {
             val response = api.refresh()
             accessToken = response.accessToken
+            accessTokenExpiresAt = response.expiresAt
             accessToken
         }.getOrNull()
 
