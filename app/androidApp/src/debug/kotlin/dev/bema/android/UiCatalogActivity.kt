@@ -261,6 +261,12 @@ private class PreviewMemosController(private val context: Context) : MemosUiCont
         return context.resources.openRawResource(resource).use { it.readBytes() }
     }
 
+    // The catalog renders fixed screens and reaches no network: an update prompt
+    // would be noise in the screenshots.
+    override suspend fun checkForUpdate() = Unit
+
+    override fun skipUpdate(version: String) = Unit
+
     private fun user(username: String, displayName: String, avatarResource: Int) = User(
         name = "users/$username",
         role = UserRole.USER,

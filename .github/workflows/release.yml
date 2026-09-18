@@ -105,6 +105,52 @@ jobs:
             app/androidApp/build/outputs/apk/release/*.apk \
             --clobber
 
+      # Publishes the APKs to the update host the app checks on launch.
+      # Reading that catalog is public; writing needs the publishing token, and the
+      # release notes have to ride along because the legacy contract the app reads
+      # is the only path that stores them.
+      - name: Publish to the update host
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          YAOTA_PUBLISH_TOKEN: ${{ secrets.YAOTA_PUBLISH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${YAOTA_PUBLISH_TOKEN:-}" ]; then
+            echo "::error::YAOTA_PUBLISH_TOKEN is not set — the APKs would never reach the in-app update prompt."
+            exit 1
+          fi
+          host="https://mobile.talesofai.com"
+          version="$(cat version.txt)"
+          release="$(gh release view "$GITHUB_REF_NAME" --json name,body,url)"
+          title="$(jq -r '.name // ""' <<<"$release")"
+          notes="$(jq -r '.body // ""' <<<"$release")"
+          release_url="$(jq -r '.url' <<<"$release")"
+
+          # The four real ABI splits. `universal` is skipped on purpose: the catalog
+          # only accepts arm64-v8a/armeabi-v7a/x86/x86_64, and the app picks the
+          # entry matching Build.SUPPORTED_ABIS.
+          for arch in arm64-v8a armeabi-v7a x86 x86_64; do
+            apk="app/androidApp/build/outputs/apk/release/androidApp-${arch}-release.apk"
+            size="$(stat -c%s "$apk")"
+            sha256="$(sha256sum "$apk" | cut -d' ' -f1)"
+            upload_url="$(curl -fsS -X POST "$host/api/apks/presign" \
+              -H "x-ota-api-key: $YAOTA_PUBLISH_TOKEN" \
+              -H 'content-type: application/json' \
+              -d "$(jq -n --arg v "$version" --arg a "$arch" --arg s "$sha256" --argjson bytes "$size" \
+                        --arg t "$title" --arg d "$notes" --arg u "$release_url" \
+                        '{version: $v, arch: $a, sha256: $s, size: $bytes,
+                          title: ($t | if . == "" then null else . end),
+                          notes: ($d | if . == "" then null else . end),
+                          releaseUrl: ($u | if . == "" then null else . end)}')" \
+              | jq -r '.uploadUrl')"
+            curl -fsS -X PUT "$upload_url" \
+              -H "x-ota-api-key: $YAOTA_PUBLISH_TOKEN" \
+              -H 'content-type: application/vnd.android.package-archive' \
+              --data-binary "@$apk" > /dev/null
+            echo "published $arch for $version ($size bytes)"
+          done
+
   ios:
     name: iOS
     runs-on: macos-26

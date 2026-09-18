@@ -14,6 +14,11 @@ import dev.bema.shared.data.network.PersistentCookieStorage
 import dev.bema.shared.data.network.normalizeInstanceUrl
 import dev.bema.shared.data.storage.KeyValueStore
 import dev.bema.shared.data.storage.PlatformKeyValueStore
+import dev.bema.shared.data.update.AppVersion
+import dev.bema.shared.data.update.AvailableUpdate
+import dev.bema.shared.data.update.UpdateApi
+import dev.bema.shared.data.update.deviceAbi
+import dev.bema.shared.data.update.installedVersionName
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -64,6 +69,8 @@ data class MemosAppState(
     val userProfiles: Map<String, User> = emptyMap(),
     // Set when a silent refresh found memos newer than the visible cached list.
     val hasNewerMemos: Boolean = false,
+    // Set when the update host has a newer signed APK for this device's ABI.
+    val availableUpdate: AvailableUpdate? = null,
     // The client's own light/dark choice; see ThemePreference.kt.
     val themeMode: ThemeMode = ThemeMode.SYSTEM
 ) {
@@ -129,6 +136,11 @@ interface MemosUiController {
     suspend fun accountAvatarBytes(account: MemosAccount): ByteArray?
     @Throws(Exception::class)
     suspend fun attachmentBytes(attachment: Attachment, thumbnail: Boolean = false): ByteArray?
+
+    // Deliberately not annotated @Throws: everything except cancellation is
+    // swallowed, because an unreachable update host must not surface as an app error.
+    suspend fun checkForUpdate()
+    fun skipUpdate(version: String)
 }
 
 @Serializable
@@ -143,6 +155,7 @@ class MemosTimelineController(
     private val keyValueStore: KeyValueStore = PlatformKeyValueStore
 ) : MemosUiController {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = false }
+    private val updateApi = UpdateApi()
     private val sessions = mutableMapOf<String, AccountSession>()
     private val avatarCache = mutableMapOf<String, ByteArray>()
     private val _state = MutableStateFlow(loadState())
@@ -596,6 +609,25 @@ class MemosTimelineController(
         _state.update { it.copy(isLoading = isLoading) }
     }
 
+    override suspend fun checkForUpdate() {
+        val update = try {
+            val abi = deviceAbi() ?: return
+            val current = AppVersion.parse(installedVersionName()) ?: return
+            val skipped = keyValueStore.getString(SKIPPED_UPDATE_KEY)?.let { AppVersion.parse(it) }
+            updateApi.availableUpdate(current, abi, skipped)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            return
+        }
+        _state.update { it.copy(availableUpdate = update) }
+    }
+
+    override fun skipUpdate(version: String) {
+        keyValueStore.putString(SKIPPED_UPDATE_KEY, version)
+        _state.update { it.copy(availableUpdate = null) }
+    }
+
     private inner class AccountSession(private val account: MemosAccount) {
         private var accessToken: String? = null
         private val cookieStorage = PersistentCookieStorage("memos.cookies.${account.id}", keyValueStore)
@@ -635,6 +667,7 @@ class MemosTimelineController(
     companion object {
         private const val ACCOUNTS_KEY = "memos.accounts"
         private const val TIMELINE_KEY_PREFIX = "memos.timeline."
+        private const val SKIPPED_UPDATE_KEY = "update.skippedVersion"
         private const val THEME_KEY = "ui.themeMode"
         private const val CACHED_MEMO_LIMIT = 100
         private const val MAX_CACHED_AVATAR_BYTES = 512 * 1024

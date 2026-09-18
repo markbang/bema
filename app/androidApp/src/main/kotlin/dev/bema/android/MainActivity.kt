@@ -7,10 +7,12 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import dev.bema.shared.data.storage.PlatformKeyValueStore
+import dev.bema.shared.data.update.installAppRelease
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         PlatformKeyValueStore.install(applicationContext)
+        installAppRelease(applicationContext)
         // Establish edge-to-edge before the first frame; the theme is applied from
         // the composition once the shared appearance preference is known.
         enableBemaEdgeToEdge(dark = null)

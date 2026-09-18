@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.activity.compose.LocalActivity
@@ -169,6 +170,7 @@ import dev.bema.shared.data.session.MemosTimelineController
 import dev.bema.shared.data.session.MemosUiController
 import dev.bema.shared.data.session.formatMemoTime
 import dev.bema.shared.data.session.isLikedBy
+import dev.bema.shared.data.update.AvailableUpdate
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlin.math.max
@@ -231,6 +233,8 @@ private val Danger: Color @Composable @ReadOnlyComposable get() = LocalBemaPalet
 @Composable
 fun BemaMemosApp(controller: MemosUiController = remember { MemosTimelineController() }) {
     val state by controller.state.collectAsState()
+    // "Later" only hides the prompt for this process; "skip" persists in the controller.
+    var dismissedUpdate by remember { mutableStateOf<String?>(null) }
     val dark = when (state.themeMode) {
         ThemeMode.SYSTEM -> isSystemInDarkTheme()
         ThemeMode.LIGHT -> false
@@ -246,8 +250,20 @@ fun BemaMemosApp(controller: MemosUiController = remember { MemosTimelineControl
                     .fillMaxSize()
                     .background(palette.ink)
             ) {
+                // Best-effort; deviceAbi() is null off Android and checkForUpdate()
+                // swallows transport failures, so this never blocks or errors the UI.
+                LaunchedEffect(Unit) { controller.checkForUpdate() }
                 if (state.activeAccount == null) SignInScreen(state, controller)
                 else TimelineShell(state, controller)
+
+                val update = state.availableUpdate
+                if (update != null && update.version != dismissedUpdate) {
+                    UpdateDialog(
+                        update = update,
+                        onDismiss = { dismissedUpdate = update.version },
+                        onSkip = { controller.skipUpdate(update.version) }
+                    )
+                }
             }
         }
     }
@@ -1850,6 +1866,73 @@ private fun RemoveAccountDialog(account: MemosAccount, onCancel: () -> Unit, onC
             }
         }
     }
+}
+
+@Composable
+private fun UpdateDialog(update: AvailableUpdate, onDismiss: () -> Unit, onSkip: () -> Unit) {
+    val context = LocalContext.current
+    WindowDialog(
+        show = true,
+        title = "Update to ${update.version}",
+        backgroundColor = InkElevated,
+        onDismissRequest = onDismiss
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            update.title?.takeIf { it.isNotBlank() }?.let { title ->
+                Text(title, color = TextPrimary, fontWeight = FontWeight.SemiBold)
+            }
+            update.notes?.takeIf { it.isNotBlank() }?.let { notes ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 240.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(EditorSurface)
+                        .verticalScroll(rememberScrollState())
+                        .padding(16.dp)
+                ) {
+                    MarkdownText(notes)
+                }
+            }
+            Text(
+                "${update.version} \u00b7 ${formatByteSize(update.sizeBytes)}",
+                color = TextSecondary
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                MiuixTextButton(text = "Later", onClick = onDismiss, modifier = Modifier.weight(1f))
+                MiuixTextButton(
+                    text = "Download",
+                    onClick = { openDownload(context, update.downloadUrl) },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.textButtonColorsPrimary()
+                )
+            }
+            MiuixTextButton(
+                text = "Skip this version",
+                onClick = onSkip,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    }
+}
+
+/**
+ * Hands the APK to whatever the system uses for web links. Installing stays the
+ * user's decision in the system installer, so the app needs no install permission.
+ */
+private fun openDownload(context: Context, url: String) {
+    runCatching {
+        context.startActivity(
+            Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+    }
+}
+
+private fun formatByteSize(bytes: Long): String = when {
+    bytes <= 0 -> "unknown size"
+    bytes >= 1024 * 1024 -> "${bytes / (1024 * 1024)} MB"
+    bytes >= 1024 -> "${bytes / 1024} KB"
+    else -> "$bytes B"
 }
 
 @Composable
