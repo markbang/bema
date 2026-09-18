@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.0.6](https://github.com/markbang/bema/compare/v0.0.5...v0.0.6) (2026-09-18)
+
+
+### Bug Fixes
+
+* keep the optimistic reaction placeholder off the wire ([76c37ea](https://github.com/markbang/bema/commit/76c37ea53d379362e006b908f23e8b00eefac63a))
+* send the bodies the server actually binds for settings and attachments ([837d1ff](https://github.com/markbang/bema/commit/837d1ff83f304cc2bde42331a1c43f7ec960146f))
+
 ## [0.0.5](https://github.com/markbang/bema/compare/v0.0.4...v0.0.5) (2026-09-18)
 
 
