@@ -47,7 +47,7 @@ final class ImageViewerViewController: UIViewController, UIScrollViewDelegate {
             }
         }
 
-        closeButton.setImage(MiuixIcons.image(.back, size: 24, color: .white), for: .normal)
+        closeButton.setImage(UIImage(systemName: "xmark"), for: .normal)
         closeButton.accessibilityLabel = "Close image"
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         closeButton.addAction(UIAction { [weak self] _ in self?.dismiss(animated: true) }, for: .touchUpInside)
