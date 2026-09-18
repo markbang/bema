@@ -168,7 +168,7 @@ final class NewerMemosCell: UITableViewCell {
 
     func setAction(_ action: @escaping () -> Void) {
         // Cells are reused, so the previous action has to go.
-        if let tapAction { button.removeAction(tapAction) }
+        if let tapAction { button.removeAction(tapAction, for: .touchUpInside) }
         let tap = UIAction { _ in action() }
         button.addAction(tap, for: .touchUpInside)
         tapAction = tap
