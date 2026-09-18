@@ -115,3 +115,12 @@ jobs:
             -destination 'generic/platform=iOS Simulator' \
             CODE_SIGNING_ALLOWED=NO \
             build
+
+      # Swift compiles against this generated interface, so when the build
+      # breaks here it is the first thing worth reading.
+      - name: Show the generated framework interface
+        if: failure()
+        run: |
+          header=$(find app/sharedLogic/build -name 'SharedLogic.h' -print -quit)
+          echo "framework header: ${header:-not found}"
+          [ -n "$header" ] && cat "$header"
