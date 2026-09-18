@@ -21,11 +21,13 @@ final class SettingsViewController: UIViewController {
     private let atomFeedField = UITextField.memo(memoPlaceholder: "Atom feed badge URL")
 
     private let languageRow = MenuRow(label: "Language")
-    private let themeRow = MenuRow(label: "Theme")
+    private let themeRow = MenuRow(label: "Instance theme")
+    private let appThemeRow = MenuRow(label: "App theme")
     private let uploadRow = MenuRow(label: "Upload size limit")
 
     private var languageValue = "en"
     private var themeValue = "system"
+    private var appThemeValue = "system"
     private var uploadValue = "0"
     private var disallowRegistration = false
     private var disallowPasswordLogin = false
@@ -82,7 +84,10 @@ final class SettingsViewController: UIViewController {
         observation = IosInterop.shared.observeState(flow: controller.state) { [weak self] state in
             guard let self else { return }
             self.siteTitle = state.activeAccount?.siteTitle ?? "the instance"
-            // Compose reloads whenever the active account changes.
+            // Client-side appearance can change while the sheet is open; the
+            // instance form below only reloads when the account changes.
+            self.appThemeValue = ThemePreferenceKt.themeModeValue(mode: state.themeMode)
+            self.appThemeRow.setOptions(self.tuples(ThemePreferenceKt.ThemeModeOptions), selected: self.appThemeValue)
             guard state.activeAccountId != self.loadedAccountId else { return }
             self.loadedAccountId = state.activeAccountId
             self.load()
@@ -144,6 +149,12 @@ final class SettingsViewController: UIViewController {
             self?.themeValue = value
             self?.refreshMenuRows()
         }
+        appThemeRow.setOptions(tuples(ThemePreferenceKt.ThemeModeOptions), selected: appThemeValue)
+        appThemeRow.onSelect = { [weak self] value in
+            guard let self else { return }
+            self.appThemeValue = value
+            self.controller.setThemeMode(mode: ThemePreferenceKt.canonicalThemeMode(raw: value))
+        }
         uploadRow.setOptions(tuples(InstanceSettingsPresentationKt.uploadSizeOptionsFor(current: uploadValue)), selected: uploadValue)
         uploadRow.onSelect = { [weak self] value in
             self?.uploadValue = value
@@ -151,6 +162,8 @@ final class SettingsViewController: UIViewController {
         }
 
         let rows: [UIView] = [
+            sectionLabel("Appearance"),
+            appThemeRow,
             sectionLabel("General"),
             titleField,
             descriptionField,
@@ -189,6 +202,7 @@ final class SettingsViewController: UIViewController {
     private func refreshMenuRows() {
         languageRow.setOptions(tuples(InstanceSettingsPresentationKt.localeOptionsFor(current: languageValue)), selected: languageValue)
         themeRow.setOptions(tuples(InstanceSettingsPresentationKt.AppearanceOptions), selected: themeValue)
+        appThemeRow.setOptions(tuples(ThemePreferenceKt.ThemeModeOptions), selected: appThemeValue)
         uploadRow.setOptions(tuples(InstanceSettingsPresentationKt.uploadSizeOptionsFor(current: uploadValue)), selected: uploadValue)
     }
 

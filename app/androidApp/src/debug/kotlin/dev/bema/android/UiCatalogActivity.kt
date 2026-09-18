@@ -21,6 +21,7 @@ import dev.bema.shared.data.session.MemosAccount
 import dev.bema.shared.data.session.MemosAppState
 import dev.bema.shared.data.session.MemosUiController
 import dev.bema.shared.data.session.PendingAttachment
+import dev.bema.shared.data.session.ThemeMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -28,7 +29,6 @@ import kotlin.time.Instant
 
 class UiCatalogActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
-        enableBemaEdgeToEdge()
         super.onCreate(savedInstanceState)
         val previewController = PreviewMemosController(this)
         setContent { BemaMemosApp(controller = previewController) }
@@ -113,7 +113,10 @@ private class PreviewMemosController(private val context: Context) : MemosUiCont
             accounts = accounts,
             activeAccountId = accounts.first().id,
             timeline = listOf(firstMemo, secondMemo, thirdMemo),
-            userProfiles = listOf(lin, max, mika).associateBy { it.username }
+            userProfiles = listOf(lin, max, mika).associateBy { it.username },
+            // Fixed screens for the catalog: pin the theme instead of inheriting
+            // whatever the emulator happens to be set to.
+            themeMode = ThemeMode.DARK
         )
     )
     override val state: StateFlow<MemosAppState> = _state
@@ -197,6 +200,10 @@ private class PreviewMemosController(private val context: Context) : MemosUiCont
 
     override fun closeMemo() {
         _state.update { it.copy(selectedMemo = null, selectedComments = emptyList()) }
+    }
+
+    override fun setThemeMode(mode: ThemeMode) {
+        _state.update { it.copy(themeMode = mode) }
     }
 
     override suspend fun comment(content: String) {

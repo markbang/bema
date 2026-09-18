@@ -6,11 +6,14 @@ import android.content.Context
 import android.content.Intent
 import android.widget.Toast
 import androidx.activity.compose.PredictiveBackHandler
+import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
@@ -84,11 +87,16 @@ import top.yukonga.miuix.kmp.icon.extended.Delete
 import top.yukonga.miuix.kmp.icon.extended.Pin
 import top.yukonga.miuix.kmp.icon.extended.Rename
 import top.yukonga.miuix.kmp.icon.extended.Unpin
+import top.yukonga.miuix.kmp.theme.Colors
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.darkColorScheme
+import top.yukonga.miuix.kmp.theme.lightColorScheme
 import top.yukonga.miuix.kmp.window.WindowBottomSheet
 import top.yukonga.miuix.kmp.window.WindowDialog
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -141,9 +149,14 @@ import dev.bema.shared.data.model.Visibility
 import dev.bema.shared.data.model.WorkspaceSetting
 import dev.bema.shared.data.session.AppearanceOptions
 import dev.bema.shared.data.session.SettingOption
+import dev.bema.shared.data.session.ThemeMode
+import dev.bema.shared.data.session.ThemeModeOptions
 import dev.bema.shared.data.session.appearanceLabel
 import dev.bema.shared.data.session.canonicalAppearance
 import dev.bema.shared.data.session.canonicalLocale
+import dev.bema.shared.data.session.canonicalThemeMode
+import dev.bema.shared.data.session.themeModeLabel
+import dev.bema.shared.data.session.themeModeValue
 import dev.bema.shared.data.session.localeLabel
 import dev.bema.shared.data.session.localeOptionsFor
 import dev.bema.shared.data.session.uploadSizeLabel
@@ -161,39 +174,119 @@ import kotlinx.coroutines.launch
 import kotlin.math.max
 import kotlin.math.min
 
-private val Ink = Color(0xFF050505)
-private val InkElevated = Color(0xFF101010)
-private val InkLine = Color(0xFF272727)
-private val TextPrimary = Color(0xFFF2F2F2)
-private val TextSecondary = Color(0xFF8C8C8C)
-private val Accent = Color(0xFF1D9BF0)
+/**
+ * App colour tokens. The two palettes mirror each other so call sites name a
+ * token instead of a literal, and [LocalBemaPalette] lets [ThemeMode] switch
+ * every one of them at once. iOS mirrors these in `Design/Theme.swift`.
+ */
+private data class BemaPalette(
+    val ink: Color,
+    val inkElevated: Color,
+    val inkLine: Color,
+    val editorSurface: Color,
+    val avatarBackground: Color,
+    val textPrimary: Color,
+    val textSecondary: Color,
+    val accent: Color,
+    val danger: Color
+)
+
+private val DarkPalette = BemaPalette(
+    ink = Color(0xFF050505),
+    inkElevated = Color(0xFF101010),
+    inkLine = Color(0xFF272727),
+    editorSurface = Color(0xFF4A4A4A),
+    avatarBackground = Color(0xFF202B35),
+    textPrimary = Color(0xFFF2F2F2),
+    textSecondary = Color(0xFF8C8C8C),
+    accent = Color(0xFF1D9BF0),
+    danger = Color(0xFFFF6B6B)
+)
+
+private val LightPalette = BemaPalette(
+    ink = Color(0xFFF5F6F8),
+    inkElevated = Color(0xFFFFFFFF),
+    inkLine = Color(0xFFE2E4E9),
+    editorSurface = Color(0xFFEDEFF3),
+    avatarBackground = Color(0xFFDCE2E9),
+    textPrimary = Color(0xFF16181D),
+    textSecondary = Color(0xFF63676E),
+    accent = Color(0xFF0A7BC0),
+    danger = Color(0xFFC53B3B)
+)
+
+private val LocalBemaPalette = staticCompositionLocalOf { DarkPalette }
+
+// Reading through the active palette keeps the existing call sites unchanged.
+private val Ink: Color @Composable @ReadOnlyComposable get() = LocalBemaPalette.current.ink
+private val InkElevated: Color @Composable @ReadOnlyComposable get() = LocalBemaPalette.current.inkElevated
+private val InkLine: Color @Composable @ReadOnlyComposable get() = LocalBemaPalette.current.inkLine
+private val EditorSurface: Color @Composable @ReadOnlyComposable get() = LocalBemaPalette.current.editorSurface
+private val AvatarBackground: Color @Composable @ReadOnlyComposable get() = LocalBemaPalette.current.avatarBackground
+private val TextPrimary: Color @Composable @ReadOnlyComposable get() = LocalBemaPalette.current.textPrimary
+private val TextSecondary: Color @Composable @ReadOnlyComposable get() = LocalBemaPalette.current.textSecondary
+private val Accent: Color @Composable @ReadOnlyComposable get() = LocalBemaPalette.current.accent
+private val Danger: Color @Composable @ReadOnlyComposable get() = LocalBemaPalette.current.danger
 
 @Composable
 fun BemaMemosApp(controller: MemosUiController = remember { MemosTimelineController() }) {
     val state by controller.state.collectAsState()
-    val darkColors = darkColorScheme(
-        primary = Accent,
-        background = Ink,
-        onBackground = TextPrimary,
-        surface = Ink,
-        onSurface = TextPrimary,
-        surfaceVariant = InkElevated,
-        outline = InkLine,
-        dividerLine = InkLine,
-        onSurfaceVariantSummary = TextSecondary,
-        onSurfaceVariantActions = TextSecondary
-    )
-    MiuixTheme(colors = darkColors) {
-        MiuixSurface(
-            color = Ink,
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Ink)
-        ) {
-            if (state.activeAccount == null) SignInScreen(state, controller)
-            else TimelineShell(state, controller)
+    val dark = when (state.themeMode) {
+        ThemeMode.SYSTEM -> isSystemInDarkTheme()
+        ThemeMode.LIGHT -> false
+        ThemeMode.DARK -> true
+    }
+    val palette = if (dark) DarkPalette else LightPalette
+    ApplyEdgeToEdge(dark)
+    CompositionLocalProvider(LocalBemaPalette provides palette) {
+        MiuixTheme(colors = palette.toColorScheme(dark)) {
+            MiuixSurface(
+                color = palette.ink,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(palette.ink)
+            ) {
+                if (state.activeAccount == null) SignInScreen(state, controller)
+                else TimelineShell(state, controller)
+            }
         }
     }
+}
+
+private fun BemaPalette.toColorScheme(dark: Boolean): Colors = if (dark) {
+    darkColorScheme(
+        primary = accent,
+        background = ink,
+        onBackground = textPrimary,
+        surface = ink,
+        onSurface = textPrimary,
+        surfaceVariant = inkElevated,
+        outline = inkLine,
+        dividerLine = inkLine,
+        onSurfaceVariantSummary = textSecondary,
+        onSurfaceVariantActions = textSecondary
+    )
+} else {
+    lightColorScheme(
+        primary = accent,
+        background = ink,
+        onBackground = textPrimary,
+        surface = ink,
+        onSurface = textPrimary,
+        surfaceVariant = inkElevated,
+        outline = inkLine,
+        dividerLine = inkLine,
+        onSurfaceVariantSummary = textSecondary,
+        onSurfaceVariantActions = textSecondary
+    )
+}
+
+@Composable
+private fun ApplyEdgeToEdge(dark: Boolean) {
+    val activity = LocalActivity.current as? ComponentActivity ?: return
+    // Keyed so bar styling is only reapplied when the theme or activity changes,
+    // not on every recomposition.
+    LaunchedEffect(activity, dark) { activity.enableBemaEdgeToEdge(dark) }
 }
 
 @Composable
@@ -205,7 +298,7 @@ private fun Avatar(
     Box(
         modifier = modifier
             .clip(CircleShape)
-            .background(Color(0xFF202B35)),
+            .background(AvatarBackground),
         contentAlignment = Alignment.Center
     ) {
         if (bytes != null) {
@@ -262,7 +355,7 @@ private fun SignInScreen(state: MemosAppState, controller: MemosUiController) {
             modifier = Modifier.fillMaxWidth(),
             cornerRadius = 24.dp
         ) { Text(if (state.isLoading) "Connecting…" else "Sign in") }
-        state.error?.let { Text(it, color = Color(0xFFFF6B6B), modifier = Modifier.padding(top = 14.dp)) }
+        state.error?.let { Text(it, color = Danger, modifier = Modifier.padding(top = 14.dp)) }
     }
 }
 
@@ -593,7 +686,7 @@ private fun TimelineScreen(
         contentPadding = PaddingValues(top = topPad, bottom = 20.dp)
     ) {
         item { if (state.isLoading && state.timeline.isEmpty()) LoadingLine() }
-        state.error?.let { message -> item { Text(message, color = Color(0xFFFF6B6B), modifier = Modifier.padding(18.dp)) } }
+        state.error?.let { message -> item { Text(message, color = Danger, modifier = Modifier.padding(18.dp)) } }
         if (state.hasNewerMemos) {
             item {
                 Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
@@ -693,7 +786,7 @@ private fun SearchScreen(
                 }
             }
             isSearching -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { LoadingLine() }
-            searchError != null -> Text(searchError!!, color = Color(0xFFFF6B6B), modifier = Modifier.padding(18.dp))
+            searchError != null -> Text(searchError!!, color = Danger, modifier = Modifier.padding(18.dp))
             results.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text("No memos match \"$query\"", color = TextSecondary)
             }
@@ -770,37 +863,41 @@ private fun MemoTweet(
 
 @Composable
 private fun MarkdownText(markdown: String, modifier: Modifier = Modifier) {
+    // Read the palette once here; `markdownInline` stays a pure function.
+    val accent = Accent
+    val codeBackground = InkElevated
+    val styled = { input: String -> markdownInline(input, accent, codeBackground) }
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         markdown.split('\n').forEach { line ->
             when {
                 line.isBlank() -> Spacer(Modifier.height(4.dp))
                 line.startsWith("### ") -> Text(
-                    text = markdownInline(line.removePrefix("### ")),
+                    text = styled(line.removePrefix("### ")),
                     color = TextPrimary,
                     style = MiuixTheme.textStyles.headline1.copy(fontWeight = FontWeight.Bold)
                 )
                 line.startsWith("## ") -> Text(
-                    text = markdownInline(line.removePrefix("## ")),
+                    text = styled(line.removePrefix("## ")),
                     color = TextPrimary,
                     style = MiuixTheme.textStyles.title3.copy(fontWeight = FontWeight.Bold)
                 )
                 line.startsWith("# ") -> Text(
-                    text = markdownInline(line.removePrefix("# ")),
+                    text = styled(line.removePrefix("# ")),
                     color = TextPrimary,
                     style = MiuixTheme.textStyles.title2.copy(fontWeight = FontWeight.Bold)
                 )
                 line.startsWith("- ") || line.startsWith("* ") -> Text(
-                    text = markdownInline("• ${line.drop(2)}"),
+                    text = styled("• ${line.drop(2)}"),
                     color = TextPrimary,
                     style = MiuixTheme.textStyles.paragraph
                 )
                 line.startsWith("> ") -> Text(
-                    text = markdownInline(line.removePrefix("> ")),
+                    text = styled(line.removePrefix("> ")),
                     color = TextSecondary,
                     style = MiuixTheme.textStyles.paragraph.copy(fontStyle = FontStyle.Italic)
                 )
                 else -> Text(
-                    text = markdownInline(line),
+                    text = styled(line),
                     color = TextPrimary,
                     style = MiuixTheme.textStyles.paragraph
                 )
@@ -809,7 +906,7 @@ private fun MarkdownText(markdown: String, modifier: Modifier = Modifier) {
     }
 }
 
-private fun markdownInline(input: String): AnnotatedString = buildAnnotatedString {
+private fun markdownInline(input: String, accent: Color, codeBackground: Color): AnnotatedString = buildAnnotatedString {
     var index = 0
     while (index < input.length) {
         when {
@@ -828,7 +925,7 @@ private fun markdownInline(input: String): AnnotatedString = buildAnnotatedStrin
             input[index] == '`' -> {
                 val end = input.indexOf('`', index + 1)
                 if (end > index + 1) {
-                    withStyle(SpanStyle(color = Accent, background = InkElevated)) {
+                    withStyle(SpanStyle(color = accent, background = codeBackground)) {
                         append(input.substring(index + 1, end))
                     }
                     index = end + 1
@@ -846,7 +943,7 @@ private fun markdownInline(input: String): AnnotatedString = buildAnnotatedStrin
                     -1
                 }
                 if (labelEnd > index + 1 && urlEnd > urlStart + 1) {
-                    withStyle(SpanStyle(color = Accent, textDecoration = TextDecoration.Underline)) {
+                    withStyle(SpanStyle(color = accent, textDecoration = TextDecoration.Underline)) {
                         append(input.substring(index + 1, labelEnd))
                     }
                     index = urlEnd + 1
@@ -982,7 +1079,7 @@ private fun ComposerDialog(state: MemosAppState, controller: MemosUiController, 
                         .fillMaxWidth()
                         .heightIn(min = 140.dp, max = 420.dp)
                         .clip(RoundedCornerShape(16.dp))
-                        .background(Color(0xFF4A4A4A))
+                        .background(EditorSurface)
                         .verticalScroll(rememberScrollState())
                         .padding(16.dp)
                 ) {
@@ -1099,7 +1196,7 @@ private fun MarkdownEditor(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .background(Color(0xFF4A4A4A))
+            .background(EditorSurface)
             .padding(16.dp),
         decorationBox = { innerTextField ->
             Box {
@@ -1207,6 +1304,7 @@ private fun SettingsSheet(state: MemosAppState, controller: MemosUiController, o
     var localePicker by remember { mutableStateOf(false) }
     var appearancePicker by remember { mutableStateOf(false) }
     var uploadPicker by remember { mutableStateOf(false) }
+    var themePicker by remember { mutableStateOf(false) }
 
     LaunchedEffect(state.activeAccountId) {
         try {
@@ -1241,13 +1339,21 @@ private fun SettingsSheet(state: MemosAppState, controller: MemosUiController, o
     ) {
         when {
             loadError != null -> Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                Text(loadError!!, color = Color(0xFFFF6B6B))
+                Text(loadError!!, color = Danger)
                 MiuixTextButton(text = "Close", onClick = onDismiss, modifier = Modifier.fillMaxWidth())
             }
             settings == null -> Box(Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) {
                 InfiniteProgressIndicator(color = Accent, size = 26.dp)
             }
             else -> Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                // Client-side appearance; the instance "Theme" below only restyles the
+                // Memos web UI, so it deliberately lives in its own section.
+                SettingsSection("Appearance")
+                SettingsOptionRow(
+                    label = "App theme",
+                    valueLabel = themeModeLabel(state.themeMode),
+                    onClick = { themePicker = true }
+                )
                 SettingsSection("General")
                 SettingsTextField("Instance title", instanceTitle) { instanceTitle = it }
                 SettingsTextField("Description", instanceDescription) { instanceDescription = it }
@@ -1258,7 +1364,7 @@ private fun SettingsSheet(state: MemosAppState, controller: MemosUiController, o
                     onClick = { localePicker = true }
                 )
                 SettingsOptionRow(
-                    label = "Theme",
+                    label = "Instance theme",
                     valueLabel = appearanceLabel(instanceAppearance),
                     onClick = { appearancePicker = true }
                 )
@@ -1280,7 +1386,7 @@ private fun SettingsSheet(state: MemosAppState, controller: MemosUiController, o
                 SettingsSwitch("Disallow changing username", disallowChangeUsername) { disallowChangeUsername = it }
                 SettingsSwitch("Disallow changing nickname", disallowChangeNickname) { disallowChangeNickname = it }
 
-                saveError?.let { Text(it, color = Color(0xFFFF6B6B)) }
+                saveError?.let { Text(it, color = Danger) }
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     MiuixTextButton(text = "Cancel", onClick = onDismiss, modifier = Modifier.weight(1f), enabled = !saving)
                     MiuixTextButton(
@@ -1373,6 +1479,15 @@ private fun SettingsSheet(state: MemosAppState, controller: MemosUiController, o
             selected = instanceAppearance,
             onSelect = { instanceAppearance = it },
             onDismiss = { appearancePicker = false }
+        )
+    }
+    if (themePicker) {
+        SettingsOptionPicker(
+            title = "App theme",
+            options = ThemeModeOptions,
+            selected = themeModeValue(state.themeMode),
+            onSelect = { controller.setThemeMode(canonicalThemeMode(it)) },
+            onDismiss = { themePicker = false }
         )
     }
     if (uploadPicker) {
@@ -1599,7 +1714,7 @@ private fun AccountActionRow(
     destructive: Boolean = false,
     onClick: () -> Unit
 ) {
-    val color = if (destructive) Color(0xFFFF6B6B) else TextPrimary
+    val color = if (destructive) Danger else TextPrimary
     Row(
         Modifier
             .fillMaxWidth()
@@ -1654,7 +1769,7 @@ private fun AddAccountForm(state: MemosAppState, controller: MemosUiController, 
         DarkField(instance, { instance = it }, "Memos instance", "memos.example.com")
         DarkField(username, { username = it }, "Username")
         DarkField(password, { password = it }, "Password", secure = true)
-        state.error?.let { Text(it, color = Color(0xFFFF6B6B)) }
+        state.error?.let { Text(it, color = Danger) }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             MiuixTextButton(text = "Cancel", onClick = onBack, modifier = Modifier.weight(1f), enabled = !submitting)
             MiuixTextButton(
@@ -1850,7 +1965,7 @@ private fun MemoDetailScreen(
                             .fillMaxWidth()
                             .height(120.dp)
                             .clip(RoundedCornerShape(16.dp))
-                            .background(Color(0xFF4A4A4A))
+                            .background(EditorSurface)
                             .padding(16.dp)
                     ) {
                         if (comment.text.isBlank()) Text("Nothing to preview", color = TextSecondary)

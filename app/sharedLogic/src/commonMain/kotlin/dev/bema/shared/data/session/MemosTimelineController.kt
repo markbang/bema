@@ -63,7 +63,9 @@ data class MemosAppState(
     val error: String? = null,
     val userProfiles: Map<String, User> = emptyMap(),
     // Set when a silent refresh found memos newer than the visible cached list.
-    val hasNewerMemos: Boolean = false
+    val hasNewerMemos: Boolean = false,
+    // The client's own light/dark choice; see ThemePreference.kt.
+    val themeMode: ThemeMode = ThemeMode.SYSTEM
 ) {
     val activeAccount: MemosAccount? get() = accounts.firstOrNull { it.id == activeAccountId }
     val orderedAccounts: List<MemosAccount> get() = accounts.sortedByDescending { it.pinned }
@@ -113,6 +115,7 @@ interface MemosUiController {
     @Throws(Exception::class)
     suspend fun openMemo(name: String)
     fun closeMemo()
+    fun setThemeMode(mode: ThemeMode)
     @Throws(Exception::class)
     suspend fun comment(content: String)
     @Throws(Exception::class)
@@ -424,6 +427,12 @@ class MemosTimelineController(
         _state.update { it.copy(selectedMemo = null, selectedComments = emptyList()) }
     }
 
+    override fun setThemeMode(mode: ThemeMode) {
+        if (_state.value.themeMode == mode) return
+        keyValueStore.putString(THEME_KEY, themeModeValue(mode))
+        _state.update { it.copy(themeMode = mode) }
+    }
+
     override suspend fun comment(content: String) {
         val parent = _state.value.selectedMemo ?: return
         val body = content.trim()
@@ -553,7 +562,8 @@ class MemosTimelineController(
             accounts = accounts,
             activeAccountId = active,
             timeline = cached?.memos.orEmpty(),
-            nextPageToken = cached?.nextPageToken.orEmpty()
+            nextPageToken = cached?.nextPageToken.orEmpty(),
+            themeMode = canonicalThemeMode(keyValueStore.getString(THEME_KEY))
         )
     }
 
@@ -625,6 +635,7 @@ class MemosTimelineController(
     companion object {
         private const val ACCOUNTS_KEY = "memos.accounts"
         private const val TIMELINE_KEY_PREFIX = "memos.timeline."
+        private const val THEME_KEY = "ui.themeMode"
         private const val CACHED_MEMO_LIMIT = 100
         private const val MAX_CACHED_AVATAR_BYTES = 512 * 1024
 
