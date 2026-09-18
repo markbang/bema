@@ -46,7 +46,13 @@ final class AccountRowView: UIView {
     private let onTap: () -> Void
     private let onHold: () -> Void
 
-    init(account: MemosAccount, isActive: Bool, onTap: @escaping () -> Void, onHold: @escaping () -> Void) {
+    init(
+        account: MemosAccount,
+        isActive: Bool,
+        controller: MemosTimelineController,
+        onTap: @escaping () -> Void,
+        onHold: @escaping () -> Void
+    ) {
         self.account = account
         self.onTap = onTap
         self.onHold = onHold
@@ -59,6 +65,11 @@ final class AccountRowView: UIView {
             avatar.heightAnchor.constraint(equalToConstant: 42)
         ])
         avatar.setAvatar(nil, label: account.visibleName)
+        Task { [weak avatar] in
+            let bytes = try? await controller.accountAvatarBytes(account: account)
+            guard !Task.isCancelled else { return }
+            avatar?.setAvatar(decodedImage(from: bytes), label: account.visibleName)
+        }
 
         let title = UILabel()
         title.text = account.siteTitle
@@ -238,6 +249,7 @@ final class AccountsSheetViewController: UIViewController {
             AccountRowView(
                 account: account,
                 isActive: account.id == state.activeAccountId,
+                controller: controller,
                 onTap: { [weak self] in
                     guard let self else { return }
                     Task { [weak self] in

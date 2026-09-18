@@ -123,6 +123,10 @@ final class MarkdownComposerView: UIView {
 
     var text: String { editor.text ?? "" }
 
+    func setText(_ value: String) {
+        editor.setText(value)
+    }
+
     private let writeChip: ChipButton
     private let previewChip: ChipButton
     private let editor: MarkdownTextView

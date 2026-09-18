@@ -43,7 +43,7 @@ final class ImageViewerViewController: UIViewController, UIScrollViewDelegate {
             Task { [weak page] in
                 let bytes = try? await controller.attachmentBytes(attachment: attachment, thumbnail: false)
                 guard !Task.isCancelled else { return }
-                page?.image = image(from: bytes)
+                page?.image = decodedImage(from: bytes)
             }
         }
 

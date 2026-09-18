@@ -6,10 +6,12 @@ import UIKit
 /// A Kotlin `ByteArray` is not an `NSData`; copy through the framework's iOS
 /// bridge instead of reading it element by element through interop.
 func kotlinBytes(_ data: Data) -> KotlinByteArray {
-    IosInterop.shared.byteArray(data: data as NSData)
+    IosInterop.shared.byteArray(data: data)
 }
 
-func image(from bytes: KotlinByteArray?) -> UIImage? {
+/// Named `decodedImage` rather than `image` because `UITableViewCell` still
+/// declares a deprecated `image` property that would shadow it inside a cell.
+func decodedImage(from bytes: KotlinByteArray?) -> UIImage? {
     guard let bytes else { return nil }
     return UIImage(data: IosInterop.shared.nsData(bytes: bytes) as Data)
 }

@@ -82,7 +82,7 @@ final class TimelineHeaderView: UIView {
         avatarTask = Task { [weak self] in
             let bytes = try? await controller.accountAvatarBytes(account: account)
             guard !Task.isCancelled else { return }
-            self?.avatar.setAvatar(image(from: bytes), label: account.visibleName)
+            self?.avatar.setAvatar(decodedImage(from: bytes), label: account.visibleName)
         }
     }
 }

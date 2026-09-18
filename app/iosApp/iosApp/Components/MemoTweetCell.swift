@@ -215,7 +215,7 @@ final class MemoTweetCell: UITableViewCell {
             imageTasks.append(Task { [weak page] in
                 let bytes = try? await controller.attachmentBytes(attachment: attachment, thumbnail: true)
                 guard !Task.isCancelled else { return }
-                page?.setImage(image(from: bytes))
+                page?.setImage(decodedImage(from: bytes))
             })
         }
 
@@ -231,7 +231,7 @@ final class MemoTweetCell: UITableViewCell {
             imageTasks.append(Task { [weak self] in
                 let bytes = try? await controller.avatarBytes(user: user)
                 guard !Task.isCancelled else { return }
-                self?.avatarView.setAvatar(image(from: bytes), label: name)
+                self?.avatarView.setAvatar(decodedImage(from: bytes), label: name)
             })
         } else {
             avatarView.setAvatar(nil, label: name)
