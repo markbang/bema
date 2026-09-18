@@ -1,6 +1,5 @@
 package dev.bema.shared
 
-import dev.bema.shared.data.model.CreateCommentBody
 import dev.bema.shared.data.model.Memo
 import dev.bema.shared.data.model.MemoInput
 import dev.bema.shared.data.model.PasswordCredentials
@@ -95,22 +94,23 @@ class MemosContractTest {
     }
 
     @Test
-    fun commentRequestsNestTheMemoUnderComment() {
-        // CreateMemoComment binds the entire request (body: "*"), so a bare memo is
-        // rejected. CreateMemo binds body: "memo" and does take one directly, which
-        // is why only comments were broken.
-        val encoded = json.encodeToString(CreateCommentBody(MemoInput("nice", Visibility.PUBLIC)))
+    fun commentRequestsSendTheMemoDirectly() {
+        // CreateMemoComment binds `body: "comment"`, so the body is the memo itself.
+        // Wrapping it in a `comment` field makes the server create an empty comment
+        // instead. Verified against a local Memos.
+        val encoded = json.encodeToString(MemoInput("nice", Visibility.PUBLIC))
 
-        assertEquals("""{"comment":{"content":"nice","visibility":"PUBLIC"}}""", encoded)
+        assertEquals("""{"content":"nice","visibility":"PUBLIC"}""", encoded)
     }
 
     @Test
-    fun reactionRequestsCarryTheMemoNameInTheBody() {
-        // The request message marks `name` required, and the web client sends it
-        // alongside the path parameter. Omitting it is what made likes do nothing.
-        val encoded = json.encodeToString(UpsertReactionBody("memos/abc", ReactionInput(HEART_REACTION)))
+    fun reactionRequestsCarryOnlyTheReaction() {
+        // UpsertMemoReaction binds `body: "*"`, but `name` is bound from the path, so
+        // the body carries the reaction alone. Verified against a local Memos: this
+        // shape answers 200.
+        val encoded = json.encodeToString(UpsertReactionBody(ReactionInput(HEART_REACTION)))
 
-        assertTrue(encoded.contains("\"name\":\"memos/abc\""))
+        assertFalse(encoded.contains("\"name\""))
         assertTrue(encoded.contains("\"reaction\":{\"reactionType\":"))
         assertTrue(encoded.contains(HEART_REACTION))
     }

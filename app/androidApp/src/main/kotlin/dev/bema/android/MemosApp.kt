@@ -235,6 +235,11 @@ fun BemaMemosApp(controller: MemosUiController = remember { MemosTimelineControl
     val state by controller.state.collectAsState()
     // "Later" only hides the prompt for this process; "skip" persists in the controller.
     var dismissedUpdate by remember { mutableStateOf<String?>(null) }
+    // Rooted at the app, not in SignInScreen: adding an account outlives the sign-in
+    // screen, which the state change removes while the first timeline load is still
+    // running. A scope owned by that screen cancels the load, and Compose reports
+    // "rememberCoroutineScope left the composition" through the controller's error.
+    val appScope = rememberCoroutineScope()
     val dark = when (state.themeMode) {
         ThemeMode.SYSTEM -> isSystemInDarkTheme()
         ThemeMode.LIGHT -> false
@@ -253,8 +258,13 @@ fun BemaMemosApp(controller: MemosUiController = remember { MemosTimelineControl
                 // Best-effort; deviceAbi() is null off Android and checkForUpdate()
                 // swallows transport failures, so this never blocks or errors the UI.
                 LaunchedEffect(Unit) { controller.checkForUpdate() }
-                if (state.activeAccount == null) SignInScreen(state, controller)
-                else TimelineShell(state, controller)
+                if (state.activeAccount == null) {
+                    SignInScreen(state) { instance, username, password ->
+                        appScope.launch { controller.addAccount(instance, username, password) }
+                    }
+                } else {
+                    TimelineShell(state, controller)
+                }
 
                 val update = state.availableUpdate
                 if (update != null && update.version != dismissedUpdate) {
@@ -342,8 +352,7 @@ private fun AccountAvatar(account: MemosAccount?, label: String, modifier: Modif
 }
 
 @Composable
-private fun SignInScreen(state: MemosAppState, controller: MemosUiController) {
-    val scope = rememberCoroutineScope()
+private fun SignInScreen(state: MemosAppState, onSignIn: (String, String, String) -> Unit) {
     var instance by remember { mutableStateOf("") }
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -367,7 +376,7 @@ private fun SignInScreen(state: MemosAppState, controller: MemosUiController) {
         Spacer(Modifier.height(20.dp))
         MiuixButton(
             enabled = !state.isLoading,
-            onClick = { scope.launch { controller.addAccount(instance, username, password) } },
+            onClick = { onSignIn(instance, username, password) },
             modifier = Modifier.fillMaxWidth(),
             cornerRadius = 24.dp
         ) { Text(if (state.isLoading) "Connecting…" else "Sign in") }

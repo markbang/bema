@@ -22,6 +22,8 @@ import dev.bema.shared.data.update.installedVersionName
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Clock
 import kotlin.time.Instant
@@ -156,6 +158,7 @@ class MemosTimelineController(
 ) : MemosUiController {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = false }
     private val updateApi = UpdateApi()
+    private val reactionMutex = Mutex()
     private val sessions = mutableMapOf<String, AccountSession>()
     private val avatarCache = mutableMapOf<String, ByteArray>()
     private val _state = MutableStateFlow(loadState())
@@ -168,7 +171,7 @@ class MemosTimelineController(
         require(password.isNotBlank()) { "Password is required" }
 
         setBusy(isLoading = true)
-        runCatching {
+        try {
             val accountId = accountId(normalized, username)
             val draft = MemosAccount(id = accountId, instanceUrl = normalized, username = username.trim())
             val session = sessions.getOrPut(accountId) { AccountSession(draft) }
@@ -196,10 +199,15 @@ class MemosTimelineController(
             }
             persistAccounts()
             refreshTimeline("")
-        }.onFailure { error ->
-            _state.update { it.copy(error = error.message ?: "Sign in failed") }
+        } catch (e: CancellationException) {
+            // Cancellation is not a sign-in failure; reporting it as one turned a
+            // Compose scope teardown into a visible "…left the composition" error.
+            throw e
+        } catch (e: Exception) {
+            _state.update { it.copy(error = e.message ?: "Sign in failed") }
+        } finally {
+            setBusy(isLoading = false)
         }
-        setBusy(isLoading = false)
     }
 
     override suspend fun selectAccount(accountId: String) {
@@ -460,35 +468,43 @@ class MemosTimelineController(
     override suspend fun react(memo: Memo, reactionType: String) {
         val account = _state.value.activeAccount ?: return
         val session = activeSessionOrNull() ?: return
-        val existing = memo.reactions.firstOrNull { it.reactionType == reactionType && it.isBy(account) }
-        val previous = memo.reactions
-        val optimistic = if (existing != null) {
-            previous.filterNot { it.name == existing.name }
-        } else {
-            previous.filterNot { it.isBy(account) } + Reaction(
-                name = "${memo.name}/reactions/local",
-                creator = account.userName.ifBlank { "users/${account.username}" },
-                reactionType = reactionType
-            )
-        }
-        _state.update { it.withMemoReactions(memo.name, optimistic) }
-        try {
-            if (existing != null) {
-                session.api.deleteReaction(existing.name)
+        // Serialised: a second tap that read the placeholder added below would
+        // otherwise be sent as a delete of a reaction that does not exist, which
+        // Memos answers with `400 invalid reaction ID "local"`.
+        reactionMutex.withLock {
+            // The live list, not the caller's snapshot: a placeholder has no server
+            // name, so it must never be treated as a reaction to withdraw.
+            val previous = (_state.value.memoNamed(memo.name)?.reactions ?: memo.reactions)
+                .filterNot { it.name.endsWith(LOCAL_REACTION_SUFFIX) }
+            val existing = previous.firstOrNull { it.reactionType == reactionType && it.isBy(account) }
+            val optimistic = if (existing != null) {
+                previous.filterNot { it.name == existing.name }
             } else {
-                val reaction = session.api.upsertReaction(memo.name, reactionType)
-                val current = _state.value.memoNamed(memo.name)?.reactions.orEmpty()
-                _state.update {
-                    it.withMemoReactions(
-                        memo.name,
-                        current.filterNot { reaction -> reaction.name.endsWith("/local") || reaction.isBy(account) } + reaction
-                    )
-                }
+                previous.filterNot { it.isBy(account) } + Reaction(
+                    name = "${memo.name}$LOCAL_REACTION_SUFFIX",
+                    creator = account.userName.ifBlank { "users/${account.username}" },
+                    reactionType = reactionType
+                )
             }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            _state.update { it.withMemoReactions(memo.name, previous).copy(error = e.message ?: "Reaction failed") }
+            _state.update { it.withMemoReactions(memo.name, optimistic) }
+            try {
+                if (existing != null) {
+                    session.api.deleteReaction(existing.name)
+                } else {
+                    val reaction = session.api.upsertReaction(memo.name, reactionType)
+                    val current = _state.value.memoNamed(memo.name)?.reactions.orEmpty()
+                    _state.update {
+                        it.withMemoReactions(
+                            memo.name,
+                            current.filterNot { reaction -> reaction.name.endsWith(LOCAL_REACTION_SUFFIX) || reaction.isBy(account) } + reaction
+                        )
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.withMemoReactions(memo.name, previous).copy(error = e.message ?: "Reaction failed") }
+            }
         }
     }
 
@@ -668,6 +684,9 @@ class MemosTimelineController(
         private const val ACCOUNTS_KEY = "memos.accounts"
         private const val TIMELINE_KEY_PREFIX = "memos.timeline."
         private const val SKIPPED_UPDATE_KEY = "update.skippedVersion"
+
+        /** Suffix of the placeholder a like shows before the server answers. */
+        private const val LOCAL_REACTION_SUFFIX = "/reactions/local"
         private const val THEME_KEY = "ui.themeMode"
         private const val CACHED_MEMO_LIMIT = 100
         private const val MAX_CACHED_AVATAR_BYTES = 512 * 1024

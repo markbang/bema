@@ -186,29 +186,16 @@ data class ReactionInput(
 )
 
 /**
- * Body of `POST /api/v1/memos/{memo}/reactions`.
+ * Body of `POST /api/v1/memos/{memo}/reactions`, whose binding is `body: "*"`.
  *
- * `name` is in the body as well as the path: the request message marks it
- * required, and the web client sends it (web/src/components/
- * MemoReactionListView/hooks.ts). Omitting it is what made likes silently do
- * nothing. Same shape as MemoPatch, which also carries the resource name.
+ * The request message has a `name`, but it is bound from the path, so the body
+ * carries only the reaction. Verified against a local Memos: sending `name` here
+ * is accepted too, but sending nothing but the reaction is what the server's own
+ * web client does.
  */
 @Serializable
 data class UpsertReactionBody(
-    val name: String,
     val reaction: ReactionInput
-)
-
-/**
- * Body of `POST /api/v1/memos/{memo}/comments`, whose binding is `body: "*"`.
- *
- * That is the whole `CreateMemoCommentRequest`, so the memo has to sit under
- * `comment` — unlike `POST /api/v1/memos`, which binds its body to the `memo`
- * field and therefore takes a bare memo.
- */
-@Serializable
-data class CreateCommentBody(
-    val comment: MemoInput
 )
 
 @Serializable
