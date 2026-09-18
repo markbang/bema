@@ -28,6 +28,7 @@ import kotlin.time.Instant
 
 class UiCatalogActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        enableBemaEdgeToEdge()
         super.onCreate(savedInstanceState)
         val previewController = PreviewMemosController(this)
         setContent { BemaMemosApp(controller = previewController) }

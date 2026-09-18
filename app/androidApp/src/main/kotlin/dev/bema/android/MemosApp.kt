@@ -12,6 +12,10 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -29,6 +33,9 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -86,7 +93,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.MutableFloatState
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -96,12 +106,14 @@ import kotlin.coroutines.cancellation.CancellationException
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
@@ -165,7 +177,6 @@ fun BemaMemosApp(controller: MemosUiController = remember { MemosTimelineControl
             modifier = Modifier
                 .fillMaxSize()
                 .background(Ink)
-                .statusBarsPadding()
         ) {
             if (state.activeAccount == null) SignInScreen(state, controller)
             else TimelineShell(state, controller)
@@ -215,7 +226,15 @@ private fun SignInScreen(state: MemosAppState, controller: MemosUiController) {
     var instance by remember { mutableStateOf("") }
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    Column(Modifier.fillMaxSize().background(Ink).padding(28.dp), verticalArrangement = Arrangement.Center) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(Ink)
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .padding(28.dp),
+        verticalArrangement = Arrangement.Center
+    ) {
         Text("bema", color = TextPrimary, style = MiuixTheme.textStyles.title1, fontWeight = FontWeight.Black)
         Text("Your Memos, in one timeline.", color = TextSecondary, style = MiuixTheme.textStyles.headline1)
         Spacer(Modifier.height(36.dp))
@@ -261,22 +280,19 @@ private fun TimelineShell(state: MemosAppState, controller: MemosUiController) {
     var backInProgress by remember { mutableStateOf(false) }
     val viewerProgress = remember { Animatable(0f) }
     var viewerBackInProgress by remember { mutableStateOf(false) }
+    val headerHeightPx = remember { mutableFloatStateOf(0f) }
+    val headerOffsetPx = remember { mutableFloatStateOf(0f) }
     MiuixScaffold(
         containerColor = Ink,
-        topBar = {
-            if (selectedTab == 1) SearchHeader(state)
-            else TimelineHeader(
-                state,
-                controller,
-                onSearch = { selectedTab = 1 },
-                onAccounts = { showAccounts = true }
-            )
-        },
+        contentWindowInsets = WindowInsets.navigationBars,
         bottomBar = {
             if (state.selectedMemo == null && imageViewer == null) {
                 BottomNav(
                     selectedTab = selectedTab,
-                    onTabChange = { selectedTab = it },
+                    onTabChange = { tab ->
+                        selectedTab = tab
+                        headerOffsetPx.floatValue = 0f
+                    },
                     onSettings = { showSettings = true }
                 )
             }
@@ -334,12 +350,43 @@ private fun TimelineShell(state: MemosAppState, controller: MemosUiController) {
 
         Box(Modifier.fillMaxSize()) {
             if (selectedTab == 1) {
-                SearchScreen(state, controller, Modifier.padding(padding), openMemo, openImage)
+                SearchScreen(
+                    state,
+                    controller,
+                    Modifier.padding(bottom = padding.calculateBottomPadding()),
+                    chromeHeightPx = headerHeightPx.floatValue,
+                    onOpen = openMemo,
+                    onOpenImage = openImage
+                )
             } else {
-                TimelineScreen(state, controller, Modifier.padding(padding), openMemo, { memo ->
-                    commentOnOpen = true
-                    openMemo(memo)
-                }, openImage)
+                TimelineScreen(
+                    state,
+                    controller,
+                    Modifier.padding(bottom = padding.calculateBottomPadding()),
+                    headerHeightPx,
+                    headerOffsetPx,
+                    openMemo,
+                    { memo ->
+                        commentOnOpen = true
+                        openMemo(memo)
+                    },
+                    openImage
+                )
+            }
+            if (state.selectedMemo == null) {
+                TopChrome(
+                    offsetPx = if (selectedTab == 0) headerOffsetPx.floatValue else 0f,
+                    onHeight = { headerHeightPx.floatValue = it }
+                ) {
+                    if (selectedTab == 1) SearchHeader(state)
+                    else TimelineHeader(
+                        state,
+                        controller,
+                        onSearch = { selectedTab = 1 },
+                        onAccounts = { showAccounts = true }
+                    )
+                }
+                StatusBarVeil()
             }
             if (state.selectedMemo != null) {
                 Box(
@@ -352,7 +399,7 @@ private fun TimelineShell(state: MemosAppState, controller: MemosUiController) {
                 MemoDetailScreen(
                     state,
                     controller,
-                    Modifier.padding(padding),
+                    Modifier.padding(bottom = padding.calculateBottomPadding()),
                     backProgress = { detailProgress.value },
                     startComment = commentOnOpen,
                     onCommentConsumed = { commentOnOpen = false },
@@ -383,7 +430,7 @@ private fun TimelineHeader(
 ) {
     val scope = rememberCoroutineScope()
     Row(
-        Modifier.fillMaxWidth().background(Ink).padding(horizontal = 18.dp, vertical = 10.dp),
+        Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         val account = state.activeAccount
@@ -415,7 +462,7 @@ private fun TimelineHeader(
 @Composable
 private fun SearchHeader(state: MemosAppState) {
     Row(
-        Modifier.fillMaxWidth().background(Ink).padding(horizontal = 18.dp, vertical = 10.dp),
+        Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column {
@@ -426,11 +473,59 @@ private fun SearchHeader(state: MemosAppState) {
 }
 
 @Composable
+private fun TopChrome(
+    offsetPx: Float,
+    onHeight: (Float) -> Unit,
+    content: @Composable () -> Unit
+) {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .graphicsLayer {
+                translationY = offsetPx
+                val height = size.height
+                alpha = if (height <= 0f) 1f else (1f + offsetPx / height * 1.15f).coerceIn(0f, 1f)
+            }
+            .onGloballyPositioned { onHeight(it.size.height.toFloat()) }
+    ) {
+        Box(
+            Modifier
+                .matchParentSize()
+                .background(
+                    Brush.verticalGradient(
+                        0f to Ink.copy(alpha = 0.88f),
+                        0.55f to Ink.copy(alpha = 0.42f),
+                        1f to Color.Transparent
+                    )
+                )
+        )
+        Box(Modifier.statusBarsPadding()) { content() }
+    }
+}
+
+@Composable
+private fun StatusBarVeil() {
+    val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(top + 18.dp)
+            .background(
+                Brush.verticalGradient(
+                    0f to Ink.copy(alpha = 0.78f),
+                    1f to Color.Transparent
+                )
+            )
+    )
+}
+
+@Composable
 private fun BottomNav(selectedTab: Int, onTabChange: (Int) -> Unit, onSettings: () -> Unit) {
     MiuixNavigationBar(
-        color = Ink.copy(alpha = .98f),
-        showDivider = true,
-        mode = NavigationBarDisplayMode.IconOnly
+        color = Ink.copy(alpha = .92f),
+        showDivider = false,
+        mode = NavigationBarDisplayMode.IconOnly,
+        modifier = Modifier.navigationBarsPadding()
     ) {
         MiuixNavigationBarItem(selected = selectedTab == 0, onClick = { onTabChange(0) }, icon = MiuixIcons.Home, label = "Timeline")
         MiuixNavigationBarItem(selected = selectedTab == 1, onClick = { onTabChange(1) }, icon = MiuixIcons.Search, label = "Search")
@@ -443,12 +538,28 @@ private fun TimelineScreen(
     state: MemosAppState,
     controller: MemosUiController,
     modifier: Modifier,
+    headerHeightPx: MutableFloatState,
+    headerOffsetPx: MutableFloatState,
     onOpen: (Memo) -> Unit,
     onReply: (Memo) -> Unit,
     onOpenImage: (Memo, Int) -> Unit
 ) {
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
+    val density = LocalDensity.current
+    val nestedScroll = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                val atRest = listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0
+                if (atRest && !listState.canScrollForward) return Offset.Zero
+                val height = headerHeightPx.floatValue
+                if (height <= 0f) return Offset.Zero
+                val next = (headerOffsetPx.floatValue + available.y).coerceIn(-height, 0f)
+                headerOffsetPx.floatValue = next
+                return Offset.Zero
+            }
+        }
+    }
     val shouldLoadMore by remember { derivedStateOf {
         val info = listState.layoutInfo
         state.canLoadMore && (info.visibleItemsInfo.lastOrNull()?.index ?: 0) >= info.totalItemsCount - 4
@@ -457,10 +568,17 @@ private fun TimelineScreen(
         if (state.timeline.isEmpty()) controller.refreshTimeline() else controller.revalidateTimeline()
     }
     LaunchedEffect(shouldLoadMore) { if (shouldLoadMore) controller.loadMore() }
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0 }
+            .collect { atTop -> if (atTop) headerOffsetPx.floatValue = 0f }
+    }
+    val topPad = with(density) {
+        headerHeightPx.floatValue.toDp().coerceAtLeast(WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 56.dp)
+    }
     LazyColumn(
         state = listState,
-        modifier = modifier.fillMaxSize().background(Ink),
-        contentPadding = PaddingValues(bottom = 20.dp)
+        modifier = modifier.fillMaxSize().nestedScroll(nestedScroll).background(Ink),
+        contentPadding = PaddingValues(top = topPad, bottom = 20.dp)
     ) {
         item { if (state.isLoading && state.timeline.isEmpty()) LoadingLine() }
         state.error?.let { message -> item { Text(message, color = Color(0xFFFF6B6B), modifier = Modifier.padding(18.dp)) } }
@@ -503,6 +621,7 @@ private fun SearchScreen(
     state: MemosAppState,
     controller: MemosUiController,
     modifier: Modifier,
+    chromeHeightPx: Float,
     onOpen: (Memo) -> Unit,
     onOpenImage: (Memo, Int) -> Unit
 ) {
@@ -534,7 +653,11 @@ private fun SearchScreen(
         isSearching = false
     }
 
-    Column(modifier.fillMaxSize().background(Ink)) {
+    val density = LocalDensity.current
+    val topPad = with(density) {
+        chromeHeightPx.toDp().coerceAtLeast(WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 56.dp)
+    }
+    Column(modifier.fillMaxSize().background(Ink).padding(top = topPad)) {
         MiuixTextField(
             value = query,
             onValueChange = { query = it },
@@ -1065,10 +1188,13 @@ private fun SettingsSheet(state: MemosAppState, controller: MemosUiController, o
     var enableLinkMetadata by remember { mutableStateOf(true) }
     var displayWithUpdateTime by remember { mutableStateOf(false) }
     var announcement by remember { mutableStateOf("") }
-    var maxUploadSizeMiB by remember { mutableStateOf("") }
+    var maxUploadSizeMiB by remember { mutableStateOf("0") }
     var atomFeedBadgeUrl by remember { mutableStateOf("") }
     var disallowChangeUsername by remember { mutableStateOf(false) }
     var disallowChangeNickname by remember { mutableStateOf(false) }
+    var localePicker by remember { mutableStateOf(false) }
+    var appearancePicker by remember { mutableStateOf(false) }
+    var uploadPicker by remember { mutableStateOf(false) }
 
     LaunchedEffect(state.activeAccountId) {
         try {
@@ -1077,14 +1203,14 @@ private fun SettingsSheet(state: MemosAppState, controller: MemosUiController, o
             instanceTitle = loaded.generalSetting?.customProfile?.title.orEmpty()
             instanceDescription = loaded.generalSetting?.customProfile?.description.orEmpty()
             instanceLogoUrl = loaded.generalSetting?.customProfile?.logoUrl.orEmpty()
-            instanceLocale = loaded.generalSetting?.customProfile?.locale.orEmpty()
-            instanceAppearance = loaded.generalSetting?.customProfile?.appearance.orEmpty()
+            instanceLocale = canonicalLocale(loaded.generalSetting?.customProfile?.locale.orEmpty())
+            instanceAppearance = canonicalAppearance(loaded.generalSetting?.customProfile?.appearance.orEmpty())
             disallowRegistration = loaded.generalSetting?.disallowUserRegistration ?: false
             disallowPasswordLogin = loaded.generalSetting?.disallowPasswordLogin ?: false
             enableLinkMetadata = loaded.memoRelatedSetting?.enableLinkMetadata ?: true
             displayWithUpdateTime = loaded.memoRelatedSetting?.displayWithUpdateTime ?: false
             announcement = loaded.workspaceSetting?.announcement.orEmpty()
-            maxUploadSizeMiB = loaded.workspaceSetting?.maxUploadSizeMiB?.takeIf { it > 0 }?.toString().orEmpty()
+            maxUploadSizeMiB = (loaded.workspaceSetting?.maxUploadSizeMiB ?: 0L).toString()
             atomFeedBadgeUrl = loaded.workspaceSetting?.atomFeedBadgeUrl.orEmpty()
             disallowChangeUsername = loaded.workspaceSetting?.disallowChangeUsername ?: false
             disallowChangeNickname = loaded.workspaceSetting?.disallowChangeNickname ?: false
@@ -1114,8 +1240,16 @@ private fun SettingsSheet(state: MemosAppState, controller: MemosUiController, o
                 SettingsTextField("Instance title", instanceTitle) { instanceTitle = it }
                 SettingsTextField("Description", instanceDescription) { instanceDescription = it }
                 SettingsTextField("Logo URL", instanceLogoUrl) { instanceLogoUrl = it }
-                SettingsTextField("Locale (e.g. en-US, zh-CN)", instanceLocale) { instanceLocale = it }
-                SettingsTextField("Appearance (system / light / dark)", instanceAppearance) { instanceAppearance = it }
+                SettingsOptionRow(
+                    label = "Language",
+                    valueLabel = localeLabel(instanceLocale),
+                    onClick = { localePicker = true }
+                )
+                SettingsOptionRow(
+                    label = "Theme",
+                    valueLabel = appearanceLabel(instanceAppearance),
+                    onClick = { appearancePicker = true }
+                )
                 SettingsSwitch("Disallow user registration", disallowRegistration) { disallowRegistration = it }
                 SettingsSwitch("Disallow password sign-in", disallowPasswordLogin) { disallowPasswordLogin = it }
 
@@ -1125,7 +1259,11 @@ private fun SettingsSheet(state: MemosAppState, controller: MemosUiController, o
 
                 SettingsSection("Workspace")
                 SettingsTextField("Announcement", announcement) { announcement = it }
-                SettingsTextField("Upload size limit (MiB)", maxUploadSizeMiB) { maxUploadSizeMiB = it }
+                SettingsOptionRow(
+                    label = "Upload size limit",
+                    valueLabel = uploadSizeLabel(maxUploadSizeMiB),
+                    onClick = { uploadPicker = true }
+                )
                 SettingsTextField("Atom feed badge URL", atomFeedBadgeUrl) { atomFeedBadgeUrl = it }
                 SettingsSwitch("Disallow changing username", disallowChangeUsername) { disallowChangeUsername = it }
                 SettingsSwitch("Disallow changing nickname", disallowChangeNickname) { disallowChangeNickname = it }
@@ -1201,11 +1339,38 @@ private fun SettingsSheet(state: MemosAppState, controller: MemosUiController, o
                             }
                         },
                         modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.textButtonColorsPrimary()
+                        colors = ButtonDefaults.textButtonColorsPrimary() 
                     )
                 }
             }
         }
+    }
+    if (localePicker) {
+        SettingsOptionPicker(
+            title = "Language",
+            options = localeOptionsFor(instanceLocale),
+            selected = instanceLocale,
+            onSelect = { instanceLocale = it },
+            onDismiss = { localePicker = false }
+        )
+    }
+    if (appearancePicker) {
+        SettingsOptionPicker(
+            title = "Theme",
+            options = AppearanceOptions,
+            selected = instanceAppearance,
+            onSelect = { instanceAppearance = it },
+            onDismiss = { appearancePicker = false }
+        )
+    }
+    if (uploadPicker) {
+        SettingsOptionPicker(
+            title = "Upload size limit",
+            options = uploadSizeOptionsFor(maxUploadSizeMiB),
+            selected = maxUploadSizeMiB,
+            onSelect = { maxUploadSizeMiB = it },
+            onDismiss = { uploadPicker = false }
+        )
     }
 }
 
@@ -1235,6 +1400,71 @@ private fun SettingsTextField(label: String, value: String, onValueChange: (Stri
         singleLine = true,
         modifier = Modifier.fillMaxWidth()
     )
+}
+
+@Composable
+private fun SettingsOptionRow(label: String, valueLabel: String, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .semantics { contentDescription = label }
+            .padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, color = TextPrimary, modifier = Modifier.weight(1f))
+        Text(valueLabel, color = TextSecondary)
+    }
+}
+
+@Composable
+private fun SettingsOptionPicker(
+    title: String,
+    options: List<SettingOption>,
+    selected: String,
+    onSelect: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    WindowDialog(
+        show = true,
+        title = title,
+        backgroundColor = InkElevated,
+        onDismissRequest = onDismiss
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(max = 420.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            options.forEach { option ->
+                val active = option.value == selected
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(if (active) Accent.copy(alpha = 0.18f) else Color.Transparent)
+                        .clickable {
+                            onSelect(option.value)
+                            onDismiss()
+                        }
+                        .padding(horizontal = 12.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        option.label,
+                        color = if (active) Accent else TextPrimary,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (active) {
+                        MiuixIcon(MiuixIcons.Ok, contentDescription = "Selected", tint = Accent, modifier = Modifier.size(18.dp))
+                    }
+                }
+            }
+        }
+    }
 }
 
 private sealed interface AccountSheetMode {
@@ -1526,6 +1756,11 @@ private fun MemoDetailScreen(
         }
     }
     
+    var detailChromeHeightPx by remember { mutableFloatStateOf(0f) }
+    val density = LocalDensity.current
+    val topPad = with(density) {
+        detailChromeHeightPx.toDp().coerceAtLeast(WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 56.dp)
+    }
     Box(
         modifier
             .fillMaxSize()
@@ -1533,24 +1768,8 @@ private fun MemoDetailScreen(
     ) {
         LazyColumn(
             Modifier.fillMaxSize().background(Ink),
-            contentPadding = PaddingValues(bottom = if (showCommentBox) 300.dp else 28.dp)
+            contentPadding = PaddingValues(top = topPad, bottom = if (showCommentBox) 300.dp else 28.dp)
         ) {
-            item {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(Ink)
-                        .padding(horizontal = 18.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    MiuixIconButton(onClick = { controller.closeMemo() }) {
-                        MiuixIcon(MiuixIcons.Back, contentDescription = "Back", tint = TextPrimary)
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    Text("Memo", color = TextPrimary, fontWeight = FontWeight.Bold, style = MiuixTheme.textStyles.title3)
-                }
-            }
-            
             item {
                 MemoTweet(
                     memo,
@@ -1588,6 +1807,18 @@ private fun MemoDetailScreen(
                 )
             }
         }
+        TopChrome(offsetPx = 0f, onHeight = { detailChromeHeightPx = it }) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                MiuixIconButton(onClick = { controller.closeMemo() }) {
+                    MiuixIcon(MiuixIcons.Back, contentDescription = "Back", tint = TextPrimary)
+                }
+                Text("Memo", color = TextPrimary, fontWeight = FontWeight.Bold, style = MiuixTheme.textStyles.title3)
+            }
+        }
+        StatusBarVeil()
         
         if (showCommentBox) {
             Column(
@@ -1665,6 +1896,87 @@ private fun LoadingLine() {
     }
 }
 private fun formatTime(raw: String?): String = raw?.substringAfter('T')?.substringBefore('.')?.removeSuffix("Z")?.take(5).orEmpty()
+
+private data class SettingOption(val value: String, val label: String)
+
+private val LocaleOptions = listOf(
+    SettingOption("en", "English"),
+    SettingOption("zh-Hans", "简体中文"),
+    SettingOption("zh-Hant", "繁體中文"),
+    SettingOption("ja", "日本語"),
+    SettingOption("ko", "한국어"),
+    SettingOption("fr", "Français"),
+    SettingOption("de", "Deutsch"),
+    SettingOption("es", "Español"),
+    SettingOption("ru", "Русский"),
+    SettingOption("pt-BR", "Português (Brasil)"),
+    SettingOption("pt-PT", "Português"),
+    SettingOption("vi", "Tiếng Việt"),
+    SettingOption("ar", "العربية"),
+    SettingOption("th", "ไทย"),
+    SettingOption("id", "Bahasa Indonesia"),
+    SettingOption("it", "Italiano"),
+    SettingOption("nl", "Nederlands"),
+    SettingOption("pl", "Polski"),
+    SettingOption("tr", "Türkçe"),
+    SettingOption("uk", "Українська")
+)
+
+private val AppearanceOptions = listOf(
+    SettingOption("system", "System"),
+    SettingOption("light", "Light"),
+    SettingOption("dark", "Dark")
+)
+
+private val UploadSizeOptions = listOf(
+    SettingOption("0", "Unlimited"),
+    SettingOption("8", "8 MiB"),
+    SettingOption("16", "16 MiB"),
+    SettingOption("32", "32 MiB"),
+    SettingOption("64", "64 MiB"),
+    SettingOption("128", "128 MiB"),
+    SettingOption("256", "256 MiB")
+)
+
+private fun canonicalLocale(raw: String): String {
+    val value = raw.trim()
+    return when {
+        value.isEmpty() -> "en"
+        value.equals("zh", true) || value.startsWith("zh-CN", true) || value.startsWith("zh-Hans", true) || value.equals("zh-SG", true) -> "zh-Hans"
+        value.startsWith("zh-TW", true) || value.startsWith("zh-HK", true) || value.startsWith("zh-Hant", true) -> "zh-Hant"
+        value.startsWith("en", true) -> "en"
+        value.startsWith("ja", true) -> "ja"
+        value.startsWith("ko", true) -> "ko"
+        value.equals("pt-PT", true) -> "pt-PT"
+        value.startsWith("pt", true) -> "pt-BR"
+        else -> LocaleOptions.firstOrNull { it.value.equals(value, true) }?.value ?: value
+    }
+}
+
+private fun canonicalAppearance(raw: String): String = when (raw.trim().lowercase()) {
+    "light" -> "light"
+    "dark" -> "dark"
+    else -> "system"
+}
+
+private fun localeLabel(value: String): String =
+    LocaleOptions.firstOrNull { it.value == value }?.label ?: value.ifBlank { "English" }
+
+private fun appearanceLabel(value: String): String =
+    AppearanceOptions.firstOrNull { it.value == value }?.label ?: "System"
+
+private fun uploadSizeLabel(value: String): String =
+    UploadSizeOptions.firstOrNull { it.value == value }?.label
+        ?: value.toLongOrNull()?.let { "$it MiB" }
+        ?: "Unlimited"
+
+private fun localeOptionsFor(current: String): List<SettingOption> =
+    if (LocaleOptions.any { it.value == current }) LocaleOptions
+    else listOf(SettingOption(current, current)) + LocaleOptions
+
+private fun uploadSizeOptionsFor(current: String): List<SettingOption> =
+    if (UploadSizeOptions.any { it.value == current }) UploadSizeOptions
+    else listOf(SettingOption(current, uploadSizeLabel(current))) + UploadSizeOptions
 
 private data class ImageViewerTarget(val memo: Memo, val startIndex: Int)
 
