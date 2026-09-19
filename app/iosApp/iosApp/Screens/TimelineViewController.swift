@@ -9,6 +9,7 @@ final class TimelineViewController: ContentListViewController {
         case loading
         case error(String)
         case newer
+        case filter(TimelineFilter)
         case memo(Memo)
     }
 
@@ -116,6 +117,7 @@ final class TimelineViewController: ContentListViewController {
         var items: [Item] = []
         if state.isLoading && state.timeline.isEmpty { items.append(.loading) }
         if let error = state.error { items.append(.error(error)) }
+        if let filter = state.timelineFilter { items.append(.filter(filter)) }
         if state.hasNewerMemos { items.append(.newer) }
         items.append(contentsOf: state.timeline.map(Item.memo))
         if state.isLoadingMore { items.append(.loading) }
@@ -182,6 +184,13 @@ final class TimelineViewController: ContentListViewController {
             cell.setAction { [weak self] in
                 guard let self else { return }
                 Task { try? await self.controller.refreshTimeline(filter: "") }
+            }
+            return cell
+        case .filter(let filter):
+            let cell = tableView.dequeueReusableCell(withIdentifier: FilterChipCell.reuseIdentifier, for: indexPath) as! FilterChipCell
+            cell.configure(label: filter.label) { [weak self] in
+                guard let self else { return }
+                Task { try? await self.controller.showDay(epochDay: nil) }
             }
             return cell
         case .memo(let memo):

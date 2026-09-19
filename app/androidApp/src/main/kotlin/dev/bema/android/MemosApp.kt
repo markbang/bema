@@ -82,6 +82,7 @@ import top.yukonga.miuix.kmp.icon.extended.Add
 import top.yukonga.miuix.kmp.icon.extended.Back
 import top.yukonga.miuix.kmp.icon.extended.ChevronBackward
 import top.yukonga.miuix.kmp.icon.extended.ChevronForward
+import top.yukonga.miuix.kmp.icon.extended.Close
 import top.yukonga.miuix.kmp.icon.extended.Favorites
 import top.yukonga.miuix.kmp.icon.extended.FavoritesFill
 import top.yukonga.miuix.kmp.icon.extended.Home
@@ -633,6 +634,10 @@ private fun TimelineShell(state: MemosAppState, controller: MemosUiController) {
                     pendingTag = "#$tag"
                     selectedTab = 1
                 },
+                onDayClick = { day ->
+                    activityOpen = false
+                    scope.launch { controller.showDay(day) }
+                },
                 modifier = Modifier
                     .fillMaxHeight()
                     .width(with(LocalDensity.current) { (activityWidthPx / density).dp })
@@ -814,6 +819,28 @@ private fun TimelineScreen(
     ) {
         item { if (state.isLoading && state.timeline.isEmpty()) LoadingLine() }
         state.error?.let { message -> item { Text(message, color = Danger, modifier = Modifier.padding(18.dp)) } }
+        state.timelineFilter?.let { filter ->
+            item {
+                Row(
+                    Modifier
+                        .padding(horizontal = 18.dp, vertical = 8.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(InkLine)
+                        .clickable { scope.launch { controller.showDay(null) } }
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(filter.label, color = Accent, style = MiuixTheme.textStyles.footnote1)
+                    MiuixIcon(
+                        MiuixIcons.Close,
+                        contentDescription = "Clear the day filter",
+                        tint = TextSecondary,
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+            }
+        }
         if (state.hasNewerMemos) {
             item {
                 Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
@@ -2131,6 +2158,7 @@ private const val ACTIVITY_PANEL_FRACTION = 0.86f
 private fun ActivityPanel(
     activity: ActivityStats?,
     onTagClick: (String) -> Unit,
+    onDayClick: (Long) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var monthShift by remember { mutableIntStateOf(0) }
@@ -2163,7 +2191,7 @@ private fun ActivityPanel(
                 }
             }
 
-            MonthHeatmap(year, month, activity?.dayCounts.orEmpty())
+            MonthHeatmap(year, month, activity?.dayCounts.orEmpty(), onDayClick)
 
             Text("Tags", color = TextPrimary, style = MiuixTheme.textStyles.headline1)
             val tags = activity?.tagCounts.orEmpty()
@@ -2198,7 +2226,7 @@ private fun ActivityPanel(
 
 /** One cell per day of [month], shaded by how many memos that day holds. */
 @Composable
-private fun MonthHeatmap(year: Int, month: Int, dayCounts: Map<Long, Int>) {
+private fun MonthHeatmap(year: Int, month: Int, dayCounts: Map<Long, Int>, onDayClick: (Long) -> Unit) {
     val lead = CalendarDays.weekdayOf(CalendarDays.epochDay(year, month, 1))
     val days = CalendarDays.daysInMonth(year, month)
     val busiest = (dayCounts.values.maxOrNull() ?: 0).coerceAtLeast(1)
@@ -2227,7 +2255,8 @@ private fun MonthHeatmap(year: Int, month: Int, dayCounts: Map<Long, Int>) {
                             .weight(1f)
                             .aspectRatio(1f)
                             .clip(RoundedCornerShape(6.dp))
-                            .background(if (count == null) Color.Transparent else heatColour(count, busiest)),
+                            .background(if (count == null) Color.Transparent else heatColour(count, busiest))
+                            .then(if (day == null) Modifier else Modifier.clickable { onDayClick(day) }),
                         contentAlignment = Alignment.Center
                     ) {
                         if (count != null) {

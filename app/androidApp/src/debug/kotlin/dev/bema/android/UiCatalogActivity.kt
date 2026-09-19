@@ -24,6 +24,7 @@ import dev.bema.shared.data.session.MemosAppState
 import dev.bema.shared.data.session.MemosUiController
 import dev.bema.shared.data.session.PendingAttachment
 import dev.bema.shared.data.session.ThemeMode
+import dev.bema.shared.data.session.localDayFilter
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -271,6 +272,11 @@ private class PreviewMemosController(private val context: Context) : MemosUiCont
     override fun skipUpdate(version: String) = Unit
 
     override suspend fun downloadUpdate(): ByteArray? = null
+
+    /** Reflecting a tapped day keeps the filter chip visible in the catalog. */
+    override suspend fun showDay(epochDay: Long?) {
+        _state.update { it.copy(timelineFilter = epochDay?.let { day -> localDayFilter(day, 0) }) }
+    }
 
     /** Stands in for the instance call, so the account sheet shows a version. */
     override suspend fun refreshInstanceVersion(accountId: String) {

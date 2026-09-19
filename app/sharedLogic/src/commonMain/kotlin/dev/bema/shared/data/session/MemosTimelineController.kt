@@ -18,6 +18,8 @@ import dev.bema.shared.data.update.AppVersion
 import dev.bema.shared.data.update.AvailableUpdate
 import dev.bema.shared.data.update.UpdateApi
 import dev.bema.shared.data.update.UpdateDownload
+import dev.bema.shared.data.session.TimelineFilter
+import dev.bema.shared.data.session.localDayFilter
 import dev.bema.shared.deviceUtcOffsetSeconds
 import dev.bema.shared.data.update.deviceAbi
 import dev.bema.shared.data.update.installedVersionName
@@ -82,6 +84,8 @@ data class MemosAppState(
     val updateDownload: UpdateDownload? = null,
     // Tag cloud and heatmap data for the activity panel; null until fetched.
     val activity: ActivityStats? = null,
+    // Set while the timeline is narrowed to one day from the activity panel.
+    val timelineFilter: TimelineFilter? = null,
     // The client's own light/dark choice; see ThemePreference.kt.
     val themeMode: ThemeMode = ThemeMode.SYSTEM
 ) {
@@ -164,6 +168,10 @@ interface MemosUiController {
      * Best effort, like the version above.
      */
     suspend fun refreshActivityStats()
+
+    /** Narrows the timeline to one local day, or clears it when [epochDay] is null. */
+    @Throws(Exception::class)
+    suspend fun showDay(epochDay: Long?)
 
     /**
      * Downloads the update [checkForUpdate] found, reporting progress through
@@ -302,10 +310,13 @@ class MemosTimelineController(
     override suspend fun refreshTimeline(filter: String) {
         val session = activeSessionOrNull() ?: return
         val accountId = _state.value.activeAccountId
+        // A blank filter means "whatever is current": the refresh controls must not
+        // silently drop a day the user picked in the activity panel.
+        val effective = filter.ifBlank { _state.value.timelineFilter?.cel.orEmpty() }
         // Show stale content while revalidating instead of an empty loading screen.
         setBusy(isLoading = _state.value.timeline.isEmpty())
         runCatching {
-            val response = session.api.listMemos(filter = filter)
+            val response = session.api.listMemos(filter = effective)
             val profiles = session.loadUsers(response.memos)
             _state.update { current ->
                 current.copy(
@@ -318,7 +329,11 @@ class MemosTimelineController(
                     error = null
                 )
             }
-            persistTimeline(accountId, response.memos, response.nextPageToken)
+            // Only the unfiltered list is worth keeping: caching one day would greet
+            // the next launch with that day alone.
+            if (effective.isBlank()) {
+                persistTimeline(accountId, response.memos, response.nextPageToken)
+            }
         }.onFailure { error ->
             // Serve the cache when offline instead of a dead-end error screen.
             if (_state.value.timeline.isEmpty()) {
@@ -326,6 +341,12 @@ class MemosTimelineController(
             }
         }
         setBusy(isLoading = false)
+    }
+
+    override suspend fun showDay(epochDay: Long?) {
+        val filter = epochDay?.let { localDayFilter(it, deviceUtcOffsetSeconds()) }
+        _state.update { it.copy(timelineFilter = filter) }
+        refreshTimeline("")
     }
 
     private var revalidating = false

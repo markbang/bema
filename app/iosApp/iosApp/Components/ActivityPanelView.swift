@@ -8,6 +8,8 @@ import UIKit
 final class ActivityPanelView: UIView {
     /// Called with a tag the user tapped, already prefixed with `#`.
     var onTagTap: ((String) -> Void)?
+    /// Called with the local epoch day of a tapped cell.
+    var onDayTap: ((Int64) -> Void)?
 
     private let monthLabel = UILabel()
     private let previousButton = UIButton(type: .system)
@@ -168,7 +170,7 @@ final class ActivityPanelView: UIView {
         busiest: Int,
         todayEpochDay: Int64
     ) -> UIView {
-        let cell = UILabel()
+        let cell = DayCell()
         cell.textAlignment = .center
         cell.font = TextStyle.footnote2
         cell.layer.cornerRadius = 6
@@ -181,6 +183,12 @@ final class ActivityPanelView: UIView {
         let count = counts[KotlinLong(value: day)].map { Int(truncating: $0) } ?? 0
         cell.backgroundColor = heatColour(count: count, busiest: busiest)
         cell.textColor = day == todayEpochDay ? Palette.accent : Palette.textPrimary
+        // A tap narrows the timeline to this day; the grid is rebuilt on every render,
+        // so the recognizer cannot pile up.
+        cell.onTap = { [weak self] tapped in self?.onDayTap?(tapped) }
+        cell.day = day
+        cell.isUserInteractionEnabled = true
+        cell.addGestureRecognizer(UITapGestureRecognizer(target: cell, action: #selector(DayCell.handleTap)))
         return cell
     }
 
@@ -214,6 +222,16 @@ final class ActivityPanelView: UIView {
             used += width + 8
         }
         tagsStack.addArrangedSubview(row)
+    }
+}
+
+/// A day in the month grid; tapping it filters the timeline to that day.
+private final class DayCell: UILabel {
+    var day: Int64 = 0
+    var onTap: ((Int64) -> Void)?
+
+    @objc func handleTap() {
+        onTap?(day)
     }
 }
 

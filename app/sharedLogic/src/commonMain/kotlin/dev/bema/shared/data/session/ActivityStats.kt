@@ -30,6 +30,24 @@ data class TagCount(val tag: String, val count: Int)
 
 private const val SECONDS_PER_DAY = 86_400L
 
+/** A CEL filter with the label the UI shows while it is active. */
+data class TimelineFilter(val label: String, val cel: String)
+
+/**
+ * The filter for one local day, spelled the way the web client's calendar spells it:
+ * an epoch-second range in UTC, shifted by the device offset, exclusive of the next
+ * day. `timestamp()` takes seconds rather than an RFC 3339 string.
+ */
+fun localDayFilter(epochDay: Long, utcOffsetSeconds: Int): TimelineFilter {
+    val start = epochDay * SECONDS_PER_DAY - utcOffsetSeconds
+    val date = CalendarDays.dateOf(epochDay)
+    val label = "${date.year}-" + date.month.toString().padStart(2, '0') + "-" + date.day.toString().padStart(2, '0')
+    return TimelineFilter(
+        label = label,
+        cel = "created_ts >= timestamp($start) && created_ts < timestamp(${start + SECONDS_PER_DAY})"
+    )
+}
+
 /** The local day the device is on now, matching [toActivityStats]'s buckets. */
 fun todayEpochDay(): Long =
     (Clock.System.now().epochSeconds + deviceUtcOffsetSeconds()).floorDiv(SECONDS_PER_DAY)

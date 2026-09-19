@@ -104,6 +104,12 @@ class UiCatalogScreenshotTest {
         composeRule.onRoot().performTouchInput { swipeRight() }
         settle(900)
         capture("13-activity-panel")
+
+        // Tapping a day narrows the timeline to it and closes the panel.
+        composeRule.onNodeWithText("19").performClick()
+        settle(900)
+        capture("14-day-filter")
+
         // Close it again: the bottom bar steps aside while the panel is open, so the
         // Settings tab would not be there for the next step.
         composeRule.onRoot().performTouchInput { swipeLeft() }

@@ -1,7 +1,9 @@
 package dev.bema.shared
 
 import dev.bema.shared.data.model.UserStats
+import dev.bema.shared.data.session.CalendarDays
 import dev.bema.shared.data.session.TagCount
+import dev.bema.shared.data.session.localDayFilter
 import dev.bema.shared.data.session.toActivityStats
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -46,5 +48,21 @@ class ActivityStatsTest {
         assertEquals(emptyList(), activity.tagCounts)
         assertEquals(emptyMap(), activity.dayCounts)
         assertEquals(true, activity.isEmpty)
+    }
+
+    @Test
+    fun buildsTheLocalDayRangeFilter() {
+        val epochDay = CalendarDays.epochDay(2026, 9, 19)
+        val offset = 8 * 3600
+
+        val filter = localDayFilter(epochDay, offset)
+
+        assertEquals("2026-09-19", filter.label)
+        // The range is the local day expressed in UTC seconds, half-open.
+        val start = epochDay * 86_400L - offset
+        assertEquals(
+            "created_ts >= timestamp($start) && created_ts < timestamp(${start + 86_400L})",
+            filter.cel
+        )
     }
 }

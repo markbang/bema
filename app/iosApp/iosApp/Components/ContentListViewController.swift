@@ -21,6 +21,7 @@ class ContentListViewController: UIViewController, UITableViewDataSource, UITabl
         tableView.register(ErrorCell.self, forCellReuseIdentifier: ErrorCell.reuseIdentifier)
         tableView.register(NewerMemosCell.self, forCellReuseIdentifier: NewerMemosCell.reuseIdentifier)
         tableView.register(RepliesHeaderCell.self, forCellReuseIdentifier: RepliesHeaderCell.reuseIdentifier)
+        tableView.register(FilterChipCell.self, forCellReuseIdentifier: FilterChipCell.reuseIdentifier)
         tableView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(tableView)
         NSLayoutConstraint.activate([
@@ -170,6 +171,46 @@ final class NewerMemosCell: UITableViewCell {
         // Cells are reused, so the previous action has to go.
         if let tapAction { button.removeAction(tapAction, for: .touchUpInside) }
         let tap = UIAction { _ in action() }
+        button.addAction(tap, for: .touchUpInside)
+        tapAction = tap
+    }
+}
+
+
+/// The day the activity panel filtered to, shown above the timeline with a way out.
+final class FilterChipCell: UITableViewCell {
+    static let reuseIdentifier = "FilterChipCell"
+    private let button = UIButton(type: .system)
+    private var tapAction: UIAction?
+
+    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+        super.init(style: style, reuseIdentifier: reuseIdentifier)
+        backgroundColor = Palette.ink
+        selectionStyle = .none
+        var configuration = UIButton.Configuration.gray()
+        configuration.image = UIImage(systemName: "xmark")
+        configuration.imagePlacement = .trailing
+        configuration.imagePadding = 8
+        configuration.cornerStyle = .capsule
+        configuration.baseForegroundColor = Palette.accent
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12)
+        button.configuration = configuration
+        button.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(button)
+        NSLayoutConstraint.activate([
+            button.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 18),
+            button.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
+            button.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8)
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func configure(label: String, onClear: @escaping () -> Void) {
+        button.configuration?.title = label
+        // Cells are reused, so the previous action has to go.
+        if let tapAction { button.removeAction(tapAction, for: .touchUpInside) }
+        let tap = UIAction { _ in onClear() }
         button.addAction(tap, for: .touchUpInside)
         tapAction = tap
     }
