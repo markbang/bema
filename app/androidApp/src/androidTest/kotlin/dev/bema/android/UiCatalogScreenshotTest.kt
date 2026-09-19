@@ -18,6 +18,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeRight
+import androidx.compose.ui.test.swipeLeft
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.ByteArrayOutputStream
@@ -103,6 +104,10 @@ class UiCatalogScreenshotTest {
         composeRule.onRoot().performTouchInput { swipeRight() }
         settle(900)
         capture("13-activity-panel")
+        // Close it again: the bottom bar steps aside while the panel is open, so the
+        // Settings tab would not be there for the next step.
+        composeRule.onRoot().performTouchInput { swipeLeft() }
+        settle(700)
 
         composeRule.onNodeWithContentDescription("Settings").performClick()
         settle(1400)
