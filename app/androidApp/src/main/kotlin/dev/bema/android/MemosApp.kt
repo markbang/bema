@@ -173,6 +173,7 @@ import dev.bema.shared.data.session.isLikedBy
 import dev.bema.shared.data.update.AvailableUpdate
 import dev.bema.shared.data.update.UpdateDownload
 import java.io.File
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlin.math.max
@@ -237,6 +238,9 @@ fun BemaMemosApp(controller: MemosUiController = remember { MemosTimelineControl
     val state by controller.state.collectAsState()
     // "Later" only hides the prompt for this process; "skip" persists in the controller.
     var dismissedUpdate by remember { mutableStateOf<String?>(null) }
+    // Held so cancelling the download actually stops it, rather than letting the
+    // installer appear after the user backed out.
+    var downloadJob by remember { mutableStateOf<Job?>(null) }
     // Rooted at the app, not in SignInScreen: adding an account outlives the sign-in
     // screen, which the state change removes while the first timeline load is still
     // running. A scope owned by that screen cancels the load, and Compose reports
@@ -277,10 +281,14 @@ fun BemaMemosApp(controller: MemosUiController = remember { MemosTimelineControl
                         onDismiss = { dismissedUpdate = update.version },
                         onSkip = { controller.skipUpdate(update.version) },
                         onDownload = {
-                            appScope.launch {
+                            downloadJob = appScope.launch {
                                 val bytes = controller.downloadUpdate() ?: return@launch
                                 installUpdate(context, bytes, update.downloadUrl)
                             }
+                        },
+                        onCancelDownload = {
+                            downloadJob?.cancel()
+                            dismissedUpdate = update.version
                         }
                     )
                 }
@@ -1893,7 +1901,8 @@ private fun UpdateDialog(
     download: UpdateDownload?,
     onDismiss: () -> Unit,
     onSkip: () -> Unit,
-    onDownload: () -> Unit
+    onDownload: () -> Unit,
+    onCancelDownload: () -> Unit
 ) {
     WindowDialog(
         show = true,
@@ -1927,7 +1936,7 @@ private fun UpdateDialog(
                 // The download happens in this dialog; the system installer takes over
                 // once the bytes are there.
                 Text("Downloading\u2026 ${formatProgress(running)}", color = TextSecondary)
-                MiuixTextButton(text = "Cancel", onClick = onDismiss, modifier = Modifier.fillMaxWidth())
+                MiuixTextButton(text = "Cancel", onClick = onCancelDownload, modifier = Modifier.fillMaxWidth())
             } else {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     MiuixTextButton(text = "Later", onClick = onDismiss, modifier = Modifier.weight(1f))
