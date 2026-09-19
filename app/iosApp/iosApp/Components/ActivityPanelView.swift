@@ -219,11 +219,12 @@ final class ActivityPanelView: UIView {
 
 /// A tag and its memo count, shaped like the Android chip.
 private final class TagChipView: UIView {
-    private let tag: String
+    /// Not `tag`: UIView already has one, of type Int.
+    private let tagName: String
     private let onTap: (String) -> Void
 
     init(tag: String, count: Int, onTap: @escaping (String) -> Void) {
-        self.tag = tag
+        self.tagName = tag
         self.onTap = onTap
         super.init(frame: .zero)
 
@@ -261,6 +262,6 @@ private final class TagChipView: UIView {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     @objc private func handleTap() {
-        onTap(tag)
+        onTap(tagName)
     }
 }
