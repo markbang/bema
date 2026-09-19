@@ -1,6 +1,8 @@
 package dev.bema.shared
 
-import platform.Foundation.NSTimeZone
+// Objective-C class properties arrive as extension properties in Kotlin/Native, so
+// the package import is what brings `NSTimeZone.localTimeZone` into scope.
+import platform.Foundation.*
 import platform.UIKit.UIDevice
 
 actual fun platformName(): String =
