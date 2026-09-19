@@ -11,11 +11,13 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeRight
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.ByteArrayOutputStream
@@ -93,6 +95,14 @@ class UiCatalogScreenshotTest {
         settle()
         composeRule.onNodeWithText("Done").performClick()
         settle()
+
+        // The activity panel is revealed by a sideways drag on the timeline; the
+        // image only exists if that gesture works.
+        composeRule.onNodeWithContentDescription("Timeline").performClick()
+        settle()
+        composeRule.onRoot().performTouchInput { swipeRight() }
+        settle(900)
+        capture("13-activity-panel")
 
         composeRule.onNodeWithContentDescription("Settings").performClick()
         settle(1400)

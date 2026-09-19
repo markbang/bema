@@ -1,6 +1,8 @@
 package dev.bema.shared.data.session
 
 import dev.bema.shared.data.model.UserStats
+import dev.bema.shared.deviceUtcOffsetSeconds
+import kotlin.time.Clock
 import kotlin.time.Instant
 
 /**
@@ -19,6 +21,10 @@ data class ActivityStats(
 }
 
 private const val SECONDS_PER_DAY = 86_400L
+
+/** The local day the device is on now, matching [toActivityStats]'s buckets. */
+fun todayEpochDay(): Long =
+    (Clock.System.now().epochSeconds + deviceUtcOffsetSeconds()).floorDiv(SECONDS_PER_DAY)
 
 internal fun UserStats.toActivityStats(utcOffsetSeconds: Int): ActivityStats = ActivityStats(
     tagCounts = tagCount

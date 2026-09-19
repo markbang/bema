@@ -13,6 +13,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.geometry.Offset
@@ -21,6 +25,11 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -71,6 +80,8 @@ import top.yukonga.miuix.kmp.basic.TextField as MiuixTextField
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Add
 import top.yukonga.miuix.kmp.icon.extended.Back
+import top.yukonga.miuix.kmp.icon.extended.ChevronBackward
+import top.yukonga.miuix.kmp.icon.extended.ChevronForward
 import top.yukonga.miuix.kmp.icon.extended.Favorites
 import top.yukonga.miuix.kmp.icon.extended.FavoritesFill
 import top.yukonga.miuix.kmp.icon.extended.Home
@@ -104,6 +115,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.MutableFloatState
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -124,6 +136,9 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntOffset
 import androidx.core.content.FileProvider
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -166,6 +181,9 @@ import dev.bema.shared.data.session.HEART_REACTION
 import dev.bema.shared.data.session.MemosAccount
 import dev.bema.shared.data.session.PendingAttachment
 import dev.bema.shared.data.session.MemosAppState
+import dev.bema.shared.data.session.ActivityStats
+import dev.bema.shared.data.session.CalendarDays
+import dev.bema.shared.data.session.todayEpochDay
 import dev.bema.shared.data.session.MemosTimelineController
 import dev.bema.shared.data.session.MemosUiController
 import dev.bema.shared.data.session.formatMemoTime
@@ -177,6 +195,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlin.math.max
+import kotlin.math.roundToInt
 import kotlin.math.min
 
 /**
@@ -423,6 +442,7 @@ private fun TimelineShell(state: MemosAppState, controller: MemosUiController) {
     var showSettings by remember { mutableStateOf(false) }
     var selectedTab by rememberSaveable { mutableStateOf(0) }
     var commentOnOpen by remember { mutableStateOf(false) }
+    var pendingTag by remember { mutableStateOf<String?>(null) }
     var imageViewer by remember { mutableStateOf<ImageViewerTarget?>(null) }
     val detailProgress = remember { Animatable(0f) }
     var backInProgress by remember { mutableStateOf(false) }
@@ -430,6 +450,22 @@ private fun TimelineShell(state: MemosAppState, controller: MemosUiController) {
     var viewerBackInProgress by remember { mutableStateOf(false) }
     val headerHeightPx = remember { mutableFloatStateOf(0f) }
     val headerOffsetPx = remember { mutableFloatStateOf(0f) }
+    // Activity panel: a sideways drag on the content reveals it (the timeline has no
+    // horizontal gesture of its own), and it snaps open or shut when the drag ends.
+    val activityOffset = remember { Animatable(0f) }
+    var activityOpen by remember { mutableStateOf(false) }
+    var activityWidthPx by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(activityOpen, activityWidthPx) {
+        activityOffset.animateTo(if (activityOpen) activityWidthPx else 0f, tween(220))
+    }
+    LaunchedEffect(activityOpen) {
+        if (activityOpen) controller.refreshActivityStats()
+    }
+    val activityDrag = rememberDraggableState { delta ->
+        scope.launch {
+            activityOffset.snapTo((activityOffset.value + delta).coerceIn(0f, activityWidthPx.coerceAtLeast(1f)))
+        }
+    }
     MiuixScaffold(
         containerColor = Ink,
         contentWindowInsets = WindowInsets.navigationBars,
@@ -496,13 +532,24 @@ private fun TimelineShell(state: MemosAppState, controller: MemosUiController) {
             }
         }
 
-        Box(Modifier.fillMaxSize()) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .onSizeChanged { activityWidthPx = it.width * ACTIVITY_PANEL_FRACTION }
+                .draggable(
+                    orientation = Orientation.Horizontal,
+                    state = activityDrag,
+                    onDragStopped = { activityOpen = activityOffset.value > activityWidthPx / 2f }
+                )
+        ) {
             if (selectedTab == 1) {
                 SearchScreen(
                     state,
                     controller,
                     Modifier.padding(bottom = padding.calculateBottomPadding()),
                     chromeHeightPx = headerHeightPx.floatValue,
+                    seedQuery = pendingTag,
+                    onSeedConsumed = { pendingTag = null },
                     onOpen = openMemo,
                     onOpenImage = openImage
                 )
@@ -554,6 +601,40 @@ private fun TimelineShell(state: MemosAppState, controller: MemosUiController) {
                     onOpenImage = openImage
                 )
             }
+
+            // The activity panel is drawn over everything, chrome and tabs included.
+            if (activityOffset.value > 0f) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(
+                            Color.Black.copy(
+                                alpha = 0.45f * (activityOffset.value / activityWidthPx.coerceAtLeast(1f))
+                            )
+                        )
+                        .draggable(
+                            orientation = Orientation.Horizontal,
+                            state = activityDrag,
+                            onDragStopped = { activityOpen = activityOffset.value > activityWidthPx / 2f }
+                        )
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) { activityOpen = false }
+                )
+            }
+            ActivityPanel(
+                activity = state.activity,
+                onTagClick = { tag ->
+                    activityOpen = false
+                    pendingTag = "#$tag"
+                    selectedTab = 1
+                },
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .width(with(LocalDensity.current) { (activityWidthPx / density).dp })
+                    .offset { IntOffset((activityOffset.value - activityWidthPx).roundToInt(), 0) }
+            )
         }
     }
     imageViewer?.let { target ->
@@ -770,6 +851,8 @@ private fun SearchScreen(
     controller: MemosUiController,
     modifier: Modifier,
     chromeHeightPx: Float,
+    seedQuery: String? = null,
+    onSeedConsumed: () -> Unit = {},
     onOpen: (Memo) -> Unit,
     onOpenImage: (Memo, Int) -> Unit
 ) {
@@ -778,6 +861,16 @@ private fun SearchScreen(
     var isSearching by remember { mutableStateOf(false) }
     var searchError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+
+    // A tag tapped in the activity panel arrives as a seed; the debounce below then
+    // runs it like any typed query.
+    LaunchedEffect(seedQuery) {
+        val seed = seedQuery
+        if (!seed.isNullOrBlank()) {
+            query = seed
+            onSeedConsumed()
+        }
+    }
 
     // Debounce: wait for the keyboard to settle, then hit listMemos with a CEL filter.
     LaunchedEffect(query) {
@@ -2021,6 +2114,135 @@ private fun formatByteSize(bytes: Long): String = when {
     bytes >= 1024 * 1024 -> "${bytes / (1024 * 1024)} MB"
     bytes >= 1024 -> "${bytes / 1024} KB"
     else -> "$bytes B"
+}
+
+/** Fraction of the width the activity panel covers when it is open. */
+private const val ACTIVITY_PANEL_FRACTION = 0.86f
+
+/**
+ * The activity panel a sideways drag reveals: the month's memos as a shaded grid,
+ * then the tag cloud. Both come from one `GetUserStats` response.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ActivityPanel(
+    activity: ActivityStats?,
+    onTagClick: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var monthShift by remember { mutableIntStateOf(0) }
+    val today = remember { CalendarDays.dateOf(todayEpochDay()) }
+    val (year, month) = CalendarDays.shiftMonth(today.year, today.month, monthShift)
+
+    Box(modifier.background(InkElevated)) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                MiuixIconButton(onClick = { monthShift-- }) {
+                    MiuixIcon(MiuixIcons.ChevronBackward, contentDescription = "Previous month", tint = TextPrimary)
+                }
+                Text("$year-$month", color = TextPrimary, style = MiuixTheme.textStyles.headline1)
+                MiuixIconButton(onClick = { monthShift++ }) {
+                    MiuixIcon(MiuixIcons.ChevronForward, contentDescription = "Next month", tint = TextPrimary)
+                }
+            }
+
+            MonthHeatmap(year, month, activity?.dayCounts.orEmpty())
+
+            Text("Tags", color = TextPrimary, style = MiuixTheme.textStyles.headline1)
+            val tags = activity?.tagCounts.orEmpty()
+            if (tags.isEmpty()) {
+                Text("No tags yet", color = TextSecondary, style = MiuixTheme.textStyles.footnote1)
+            } else {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    tags.forEach { (tag, count) ->
+                        Row(
+                            Modifier
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(InkLine)
+                                .clickable { onTagClick(tag) }
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text("#$tag", color = Accent, style = MiuixTheme.textStyles.footnote1)
+                            Text(count.toString(), color = TextSecondary, style = MiuixTheme.textStyles.footnote2)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** One cell per day of [month], shaded by how many memos that day holds. */
+@Composable
+private fun MonthHeatmap(year: Int, month: Int, dayCounts: Map<Long, Int>) {
+    val lead = CalendarDays.weekdayOf(CalendarDays.epochDay(year, month, 1))
+    val days = CalendarDays.daysInMonth(year, month)
+    val busiest = (dayCounts.values.maxOrNull() ?: 0).coerceAtLeast(1)
+    val today = todayEpochDay()
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf("S", "M", "T", "W", "T", "F", "S").forEach { label ->
+                Text(
+                    label,
+                    color = TextSecondary,
+                    style = MiuixTheme.textStyles.footnote2,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+        repeat((lead + days + 6) / 7) { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                repeat(7) { column ->
+                    val dayNumber = row * 7 + column - lead + 1
+                    val day = if (dayNumber in 1..days) CalendarDays.epochDay(year, month, dayNumber) else null
+                    val count = day?.let { dayCounts[it] ?: 0 }
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .aspectRatio(1f)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(if (count == null) Color.Transparent else heatColour(count, busiest)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (count != null) {
+                            Text(
+                                dayNumber.toString(),
+                                color = if (day == today) Accent else TextPrimary,
+                                style = MiuixTheme.textStyles.footnote2
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Quiet days stay flat; busy ones climb toward the accent. */
+@Composable
+private fun heatColour(count: Int, busiest: Int): Color {
+    if (count <= 0) return InkLine
+    val step = (count.toFloat() / busiest).coerceIn(0.25f, 1f)
+    return Accent.copy(alpha = 0.25f + 0.75f * step)
 }
 
 @Composable
