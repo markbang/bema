@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.0.7](https://github.com/markbang/bema/compare/v0.0.6...v0.0.7) (2026-09-19)
+
+
+### Features
+
+* **update:** download the APK in the app instead of sending users to a browser ([9812ad8](https://github.com/markbang/bema/commit/9812ad809396286be429bf7173e72cedc0f47bab))
+
+
+### Bug Fixes
+
+* reach the auth endpoints over Connect so the session survives a restart ([8bcb59b](https://github.com/markbang/bema/commit/8bcb59bbde8f17417d8c29c5569e45b261ed2162))
+* send the reaction name in the body and refresh the token before it lapses ([815d654](https://github.com/markbang/bema/commit/815d65423214e8c1ad0d53e54f368365495e7145))
+* **settings:** make the settings sheet scroll ([063b992](https://github.com/markbang/bema/commit/063b992346c8461b5bd0d49339db4c8a6b049de1))
+* **update:** make the download's Cancel actually cancel ([1365c0d](https://github.com/markbang/bema/commit/1365c0d192bf8241c6cc2242a32ba2834ab2bff0))
+
 ## [0.0.6](https://github.com/markbang/bema/compare/v0.0.5...v0.0.6) (2026-09-18)
 
 
