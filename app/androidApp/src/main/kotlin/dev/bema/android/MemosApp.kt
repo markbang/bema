@@ -470,7 +470,9 @@ private fun TimelineShell(state: MemosAppState, controller: MemosUiController) {
         containerColor = Ink,
         contentWindowInsets = WindowInsets.navigationBars,
         bottomBar = {
-            if (state.selectedMemo == null && imageViewer == null) {
+            // The activity panel is modal, so the chrome underneath it steps aside
+            // rather than being drawn across the panel.
+            if (state.selectedMemo == null && imageViewer == null && activityOffset.value <= 0f) {
                 BottomNav(
                     selectedTab = selectedTab,
                     onTabChange = { tab ->
@@ -482,7 +484,7 @@ private fun TimelineShell(state: MemosAppState, controller: MemosUiController) {
             }
         },
         floatingActionButton = {
-            if (state.selectedMemo == null && selectedTab == 0 && imageViewer == null) {
+            if (state.selectedMemo == null && selectedTab == 0 && imageViewer == null && activityOffset.value <= 0f) {
                 MiuixFloatingActionButton(onClick = { showComposer = true }, containerColor = Accent, shape = CircleShape) {
                     MiuixIcon(MiuixIcons.Add, contentDescription = "New memo", tint = Color.White)
                 }
