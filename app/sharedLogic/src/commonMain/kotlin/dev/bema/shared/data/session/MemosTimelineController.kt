@@ -51,6 +51,9 @@ data class MemosAccount(
     val avatarUrl: String = "",
     val siteTitle: String = "Memos",
     val siteLogoUrl: String = "",
+    // The instance's reported version, so the client can say which Memos it talks
+    // to. Blank until fetched.
+    val instanceVersion: String = "",
     // Pinned accounts sort to the top of the account switcher.
     val pinned: Boolean = false,
     val lastSignedInAt: Instant? = null
@@ -148,6 +151,12 @@ interface MemosUiController {
     fun skipUpdate(version: String)
 
     /**
+     * Refreshes [accountId]'s instance version from `instance/profile`. Best effort:
+     * an unreachable instance leaves the stored value alone.
+     */
+    suspend fun refreshInstanceVersion(accountId: String)
+
+    /**
      * Downloads the update [checkForUpdate] found, reporting progress through
      * [MemosAppState.updateDownload]. Null when there is nothing to install or the
      * transfer failed.
@@ -193,6 +202,7 @@ class MemosTimelineController(
                 avatarUrl = response.user.avatarUrl,
                 siteTitle = branding.first,
                 siteLogoUrl = branding.second,
+                instanceVersion = session.loadInstanceVersion(),
                 lastSignedInAt = Clock.System.now()
             )
             sessions[accountId] = session
@@ -654,6 +664,21 @@ class MemosTimelineController(
         _state.update { it.copy(availableUpdate = null) }
     }
 
+    override suspend fun refreshInstanceVersion(accountId: String) {
+        val account = _state.value.accounts.firstOrNull { it.id == accountId } ?: return
+        val session = sessions.getOrPut(accountId) { AccountSession(account) }
+        val version = session.loadInstanceVersion()
+        if (version.isBlank() || version == account.instanceVersion) return
+        _state.update { current ->
+            current.copy(
+                accounts = current.accounts.map {
+                    if (it.id == accountId) it.copy(instanceVersion = version) else it
+                }
+            )
+        }
+        persistAccounts()
+    }
+
     override suspend fun downloadUpdate(): ByteArray? {
         val update = _state.value.availableUpdate ?: return null
         val total = update.sizeBytes.takeIf { it > 0 }
@@ -695,6 +720,11 @@ class MemosTimelineController(
             val profile = api.generalSetting().generalSetting?.customProfile
             (profile?.title?.ifBlank { "Memos" } ?: "Memos") to (profile?.logoUrl.orEmpty())
         }.getOrDefault("Memos" to "")
+
+        /** The instance's version, or empty when it cannot be read. */
+        suspend fun loadInstanceVersion(): String = runCatching {
+            api.instanceProfile().version
+        }.getOrDefault("")
 
         suspend fun loadUsers(memos: List<Memo>): Map<String, User> = runCatching {
             api.batchGetUsers(memos.map { it.creator.substringAfterLast('/') })

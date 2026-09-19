@@ -1722,32 +1722,47 @@ private fun AccountSheet(state: MemosAppState, controller: MemosUiController, on
                 )
             }
             AccountSheetMode.Add -> AddAccountForm(state, controller) { mode = AccountSheetMode.List }
-            is AccountSheetMode.Actions -> Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                AccountActionRow(
-                    icon = if (current.account.pinned) MiuixIcons.Unpin else MiuixIcons.Pin,
-                    label = if (current.account.pinned) "Unpin" else "Pin to top",
-                    onClick = {
-                        scope.launch { controller.setAccountPinned(current.account.id, !current.account.pinned) }
-                        mode = AccountSheetMode.List
-                    }
-                )
-                AccountActionRow(
-                    icon = MiuixIcons.Rename,
-                    label = "Rename",
-                    onClick = {
-                        renaming = current.account
-                        mode = AccountSheetMode.List
-                    }
-                )
-                AccountActionRow(
-                    icon = MiuixIcons.Delete,
-                    label = "Remove account",
-                    destructive = true,
-                    onClick = {
-                        confirmingRemove = current.account
-                        mode = AccountSheetMode.List
-                    }
-                )
+            is AccountSheetMode.Actions -> {
+                // The stored version can be stale after an instance upgrade, so ask
+                // again while the sheet is open; the row below reads what comes back.
+                LaunchedEffect(current.account.id) { controller.refreshInstanceVersion(current.account.id) }
+                val account = state.accounts.firstOrNull { it.id == current.account.id } ?: current.account
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    // Which Memos this account talks to; the App is built against an
+                    // API that moves between releases, so it is worth showing.
+                    Text(
+                        if (account.instanceVersion.isBlank()) "Memos version unknown"
+                        else "Memos ${account.instanceVersion}",
+                        color = TextSecondary,
+                        style = MiuixTheme.textStyles.footnote1,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                    AccountActionRow(
+                        icon = if (current.account.pinned) MiuixIcons.Unpin else MiuixIcons.Pin,
+                        label = if (current.account.pinned) "Unpin" else "Pin to top",
+                        onClick = {
+                            scope.launch { controller.setAccountPinned(current.account.id, !current.account.pinned) }
+                            mode = AccountSheetMode.List
+                        }
+                    )
+                    AccountActionRow(
+                        icon = MiuixIcons.Rename,
+                        label = "Rename",
+                        onClick = {
+                            renaming = current.account
+                            mode = AccountSheetMode.List
+                        }
+                    )
+                    AccountActionRow(
+                        icon = MiuixIcons.Delete,
+                        label = "Remove account",
+                        destructive = true,
+                        onClick = {
+                            confirmingRemove = current.account
+                            mode = AccountSheetMode.List
+                        }
+                    )
+                }
             }
         }
         }

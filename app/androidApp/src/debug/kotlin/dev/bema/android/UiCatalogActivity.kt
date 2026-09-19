@@ -269,6 +269,17 @@ private class PreviewMemosController(private val context: Context) : MemosUiCont
 
     override suspend fun downloadUpdate(): ByteArray? = null
 
+    /** Stands in for the instance call, so the account sheet shows a version. */
+    override suspend fun refreshInstanceVersion(accountId: String) {
+        _state.update { current ->
+            current.copy(
+                accounts = current.accounts.map {
+                    if (it.id == accountId) it.copy(instanceVersion = "0.30.0") else it
+                }
+            )
+        }
+    }
+
     private fun user(username: String, displayName: String, avatarResource: Int) = User(
         name = "users/$username",
         role = UserRole.USER,
