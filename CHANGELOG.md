@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.0.8](https://github.com/markbang/bema/compare/v0.0.7...v0.0.8) (2026-09-19)
+
+
+### Features
+
+* **accounts:** show the instance's Memos version in the account actions ([509ea12](https://github.com/markbang/bema/commit/509ea128c21fcd9e1fcd864d94ec348e3e67d282))
+* **activity:** filter the timeline to a day tapped in the panel ([b224ac4](https://github.com/markbang/bema/commit/b224ac4b2ec2e9c3dd8fc6760c2347e6c7ae6dcc))
+* **activity:** read the instance's user stats ([bca5138](https://github.com/markbang/bema/commit/bca51381af6fdb619723b01b8d4410a43d8443d8))
+* **activity:** reveal an activity panel by dragging the timeline sideways ([7b5660c](https://github.com/markbang/bema/commit/7b5660caa0a76c16c8b9b9e73403fb81efce85e4))
+* **ios:** reveal the activity panel by dragging the timeline sideways ([b83ccc1](https://github.com/markbang/bema/commit/b83ccc1a3fbb956b7fd616b6827a95493e248088))
+* **ios:** show the instance's Memos version in the account actions ([49fdb13](https://github.com/markbang/bema/commit/49fdb1351588711a0a50a6ae561743de5696c7ee))
+
+
+### Bug Fixes
+
+* **activity:** keep the panel above the bottom bar ([8c02d1c](https://github.com/markbang/bema/commit/8c02d1cbc5f826103a77a7904b1c06004b01b5e5))
+* **ios:** box the tapped day for the Kotlin Long parameter ([86b0dd0](https://github.com/markbang/bema/commit/86b0dd00fb66b1d5c648f7ec54e80327852babdc))
+* **ios:** import the Foundation package so NSTimeZone's class properties resolve ([ca3b361](https://github.com/markbang/bema/commit/ca3b361b9aac734ee1a069ba2dd80aaa6a5946c5))
+* **ios:** rename the chip's tag property, which collided with UIView.tag ([5ad34d4](https://github.com/markbang/bema/commit/5ad34d417527992a10b9a4ac81196564add8edd1))
+
 ## [0.0.7](https://github.com/markbang/bema/compare/v0.0.6...v0.0.7) (2026-09-19)
 
 
