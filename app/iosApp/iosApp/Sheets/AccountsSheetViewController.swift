@@ -149,6 +149,14 @@ final class AccountsSheetViewController: UIViewController {
 
     private func setMode(_ mode: Mode) {
         self.mode = mode
+        // Opening the actions asks the instance for its version once; render() runs on
+        // every state change, so the request cannot live there.
+        if case .actions(let account) = mode {
+            Task { [weak self] in
+                guard let self else { return }
+                try? await self.controller.refreshInstanceVersion(accountId: account.id)
+            }
+        }
         render()
     }
 
@@ -287,6 +295,18 @@ final class AccountsSheetViewController: UIViewController {
     }
 
     private func renderActions(_ account: MemosAccount) {
+        // The mode holds the snapshot the sheet opened with; take the live copy so the
+        // version row shows what the refresh above returns.
+        let account = state.accounts.first { $0.id == account.id } ?? account
+
+        let version = UILabel()
+        version.text = account.instanceVersion.isEmpty
+            ? "Memos version unknown"
+            : "Memos \(account.instanceVersion)"
+        version.font = TextStyle.footnote1
+        version.textColor = Palette.textSecondary
+        contentStack.addArrangedSubview(version)
+
         contentStack.addArrangedSubview(ActionRowView(
             icon: account.pinned ? "pin.slash" : "pin",
             title: account.pinned ? "Unpin" : "Pin to top"
