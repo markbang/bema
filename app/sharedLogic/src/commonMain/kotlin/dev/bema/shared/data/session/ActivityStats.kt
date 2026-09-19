@@ -13,12 +13,20 @@ import kotlin.time.Instant
  */
 data class ActivityStats(
     /** Tags with their memo counts, most used first. */
-    val tagCounts: List<Pair<String, Int>> = emptyList(),
+    val tagCounts: List<TagCount> = emptyList(),
     /** Local epoch-day to how many memos were created that day. */
     val dayCounts: Map<Long, Int> = emptyMap()
 ) {
     val isEmpty: Boolean get() = tagCounts.isEmpty() && dayCounts.isEmpty()
 }
+
+/**
+ * One tag and how many memos carry it.
+ *
+ * A plain class rather than a `Pair` because Swift receives Kotlin pairs as `Any?`,
+ * and the panel reads both halves.
+ */
+data class TagCount(val tag: String, val count: Int)
 
 private const val SECONDS_PER_DAY = 86_400L
 
@@ -30,7 +38,7 @@ internal fun UserStats.toActivityStats(utcOffsetSeconds: Int): ActivityStats = A
     tagCounts = tagCount
         .entries
         .sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
-        .map { it.key to it.value },
+        .map { TagCount(it.key, it.value) },
     dayCounts = memoCreatedTimestamps
         .groupingBy { (it.epochSeconds + utcOffsetSeconds).floorDiv(SECONDS_PER_DAY) }
         .eachCount()

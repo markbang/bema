@@ -1,6 +1,7 @@
 package dev.bema.shared
 
 import dev.bema.shared.data.model.UserStats
+import dev.bema.shared.data.session.TagCount
 import dev.bema.shared.data.session.toActivityStats
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -12,7 +13,7 @@ class ActivityStatsTest {
     fun ordersTagsByUseThenName() {
         val activity = UserStats(tagCount = mapOf("b" to 1, "a" to 2, "c" to 2)).toActivityStats(0)
 
-        assertEquals(listOf("a" to 2, "c" to 2, "b" to 1), activity.tagCounts)
+        assertEquals(listOf(TagCount("a", 2), TagCount("c", 2), TagCount("b", 1)), activity.tagCounts)
     }
 
     @Test

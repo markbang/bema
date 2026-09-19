@@ -9,6 +9,13 @@ final class RootTabBarController: UITabBarController, UITabBarControllerDelegate
     private var isSignInPresented = false
     private var shownError: String?
 
+    // The activity panel rides above the tab bar, which a child view controller's own
+    // subviews cannot cover.
+    private let activityScrim = UIView()
+    private let activityPanel = ActivityPanelView()
+    private var activityOffset: CGFloat = 0
+    private var activityWidth: CGFloat = 0
+
     private lazy var timelineVC = TimelineViewController(controller: controller)
     private lazy var searchVC = SearchViewController(controller: controller)
 
@@ -27,9 +34,80 @@ final class RootTabBarController: UITabBarController, UITabBarControllerDelegate
             UINavigationController(rootViewController: searchVC)
         ]
         configureBars()
+        configureActivityPanel()
         observation = IosInterop.shared.observeState(flow: controller.state) { [weak self] state in
             self?.apply(state)
         }
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        activityWidth = view.bounds.width * 0.86
+        activityScrim.frame = view.bounds
+        positionActivity()
+    }
+
+    private func configureActivityPanel() {
+        activityScrim.backgroundColor = UIColor.black.withAlphaComponent(0.45)
+        activityScrim.isHidden = true
+        activityScrim.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(closeActivity)))
+        activityScrim.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(dragActivity(_:))))
+
+        activityPanel.isHidden = true
+        activityPanel.onTagTap = { [weak self] tag in
+            guard let self else { return }
+            self.closeActivity()
+            self.selectedIndex = 1
+            self.searchVC.seed(query: tag)
+        }
+        view.addSubview(activityScrim)
+        view.addSubview(activityPanel)
+
+        timelineVC.onActivityDrag = { [weak self] translation, ended in
+            guard let self else { return }
+            self.moveActivity(to: translation)
+            if ended { self.settleActivity() }
+        }
+    }
+
+    @objc private func dragActivity(_ recognizer: UIPanGestureRecognizer) {
+        moveActivity(to: activityWidth + recognizer.translation(in: view).x)
+        if recognizer.state == .ended || recognizer.state == .cancelled { settleActivity() }
+    }
+
+    @objc private func closeActivity() {
+        UIView.animate(withDuration: 0.22) {
+            self.activityOffset = 0
+            self.positionActivity()
+        } completion: { _ in
+            self.activityPanel.isHidden = true
+            self.activityScrim.isHidden = true
+        }
+    }
+
+    private func moveActivity(to offset: CGFloat) {
+        guard activityWidth > 0 else { return }
+        activityOffset = min(max(offset, 0), activityWidth)
+        activityPanel.isHidden = false
+        activityScrim.isHidden = false
+        positionActivity()
+    }
+
+    private func settleActivity() {
+        let shouldOpen = activityOffset > activityWidth / 2
+        UIView.animate(withDuration: 0.22) {
+            self.activityOffset = shouldOpen ? self.activityWidth : 0
+            self.positionActivity()
+        } completion: { _ in
+            self.activityPanel.isHidden = !shouldOpen
+            self.activityScrim.isHidden = !shouldOpen
+        }
+        if shouldOpen { Task { try? await self.controller.refreshActivityStats() } }
+    }
+
+    private func positionActivity() {
+        activityPanel.frame = CGRect(x: -activityWidth + activityOffset, y: 0, width: activityWidth, height: view.bounds.height)
+        activityScrim.alpha = activityWidth > 0 ? activityOffset / activityWidth : 0
     }
 
     deinit {
@@ -65,6 +143,7 @@ final class RootTabBarController: UITabBarController, UITabBarControllerDelegate
     }
 
     private func apply(_ state: MemosAppState) {
+        activityPanel.apply(state.activity)
         guard state.activeAccount != nil else {
             presentSignIn()
             return

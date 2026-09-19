@@ -183,6 +183,7 @@ import dev.bema.shared.data.session.PendingAttachment
 import dev.bema.shared.data.session.MemosAppState
 import dev.bema.shared.data.session.ActivityStats
 import dev.bema.shared.data.session.CalendarDays
+import dev.bema.shared.data.session.TagCount
 import dev.bema.shared.data.session.todayEpochDay
 import dev.bema.shared.data.session.MemosTimelineController
 import dev.bema.shared.data.session.MemosUiController
@@ -2134,7 +2135,9 @@ private fun ActivityPanel(
 ) {
     var monthShift by remember { mutableIntStateOf(0) }
     val today = remember { CalendarDays.dateOf(todayEpochDay()) }
-    val (year, month) = CalendarDays.shiftMonth(today.year, today.month, monthShift)
+    val shown = CalendarDays.shiftMonth(today.year, today.month, monthShift)
+    val year = shown.year
+    val month = shown.month
 
     Box(modifier.background(InkElevated)) {
         Column(
@@ -2171,7 +2174,9 @@ private fun ActivityPanel(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    tags.forEach { (tag, count) ->
+                    tags.forEach { entry ->
+                        val tag = entry.tag
+                        val count = entry.count
                         Row(
                             Modifier
                                 .clip(RoundedCornerShape(14.dp))

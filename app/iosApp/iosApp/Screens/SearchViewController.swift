@@ -61,6 +61,12 @@ final class SearchViewController: ContentListViewController, UISearchResultsUpda
     }
 
     /// Android waits for the keyboard to settle before hitting `listMemos`.
+    /// Runs a query the shell hands over, for a tag tapped in the activity panel.
+    func seed(query text: String) {
+        searchController.searchBar.text = text
+        schedule(text)
+    }
+
     private func schedule(_ text: String) {
         searchTask?.cancel()
         query = text.trimmingCharacters(in: .whitespacesAndNewlines)

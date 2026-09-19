@@ -10,6 +10,9 @@ package dev.bema.shared.data.session
  */
 data class CivilDate(val year: Int, val month: Int, val day: Int)
 
+/** A year and month; a named pair because Swift reads Kotlin pairs as `Any?`. */
+data class YearMonth(val year: Int, val month: Int)
+
 object CalendarDays {
 
     /** Days since 1970-01-01 for a proleptic Gregorian [year]-[month]-[day]. */
@@ -51,8 +54,8 @@ object CalendarDays {
         year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
 
     /** The month [delta] months away from [year]-[month], rolling the year over. */
-    fun shiftMonth(year: Int, month: Int, delta: Int): Pair<Int, Int> {
+    fun shiftMonth(year: Int, month: Int, delta: Int): YearMonth {
         val zeroBased = year * 12 + (month - 1) + delta
-        return zeroBased.floorDiv(12) to zeroBased.mod(12) + 1
+        return YearMonth(zeroBased.floorDiv(12), zeroBased.mod(12) + 1)
     }
 }

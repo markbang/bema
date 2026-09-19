@@ -19,6 +19,7 @@ import dev.bema.shared.data.model.Visibility
 import dev.bema.shared.data.model.WorkspaceSetting
 import dev.bema.shared.data.session.ActivityStats
 import dev.bema.shared.data.session.MemosAccount
+import dev.bema.shared.data.session.TagCount
 import dev.bema.shared.data.session.MemosAppState
 import dev.bema.shared.data.session.MemosUiController
 import dev.bema.shared.data.session.PendingAttachment
@@ -297,8 +298,8 @@ private class PreviewMemosController(private val context: Context) : MemosUiCont
             it.copy(
                 activity = ActivityStats(
                     tagCounts = listOf(
-                        "android" to 12, "native" to 9, "compose" to 7,
-                        "memos" to 5, "ui" to 4, "kotlin" to 3
+                        TagCount("android", 12), TagCount("native", 9), TagCount("compose", 7),
+                        TagCount("memos", 5), TagCount("ui", 4), TagCount("kotlin", 3)
                     ),
                     dayCounts = dayCounts
                 )

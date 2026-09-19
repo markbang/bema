@@ -22,6 +22,10 @@ final class TimelineViewController: ContentListViewController {
     private var avatarTask: Task<Void, Never>?
     private var loadedAccountId: String?
 
+    /// Reports a sideways drag so the shell can slide the activity panel in; the
+    /// timeline itself has no horizontal gesture to compete with.
+    var onActivityDrag: ((CGFloat, Bool) -> Void)?
+
     init(controller: MemosTimelineController) {
         self.controller = controller
         super.init(nibName: nil, bundle: nil)
@@ -42,6 +46,22 @@ final class TimelineViewController: ContentListViewController {
         tableView.refreshControl = refreshControl
         observation = IosInterop.shared.observeState(flow: controller.state) { [weak self] state in
             self?.apply(state)
+        }
+
+        let activityPan = UIPanGestureRecognizer(target: self, action: #selector(handleActivityPan(_:)))
+        activityPan.delegate = self
+        view.addGestureRecognizer(activityPan)
+    }
+
+    @objc private func handleActivityPan(_ recognizer: UIPanGestureRecognizer) {
+        let translation = max(recognizer.translation(in: view).x, 0)
+        switch recognizer.state {
+        case .changed:
+            onActivityDrag?(translation, false)
+        case .ended, .cancelled:
+            onActivityDrag?(translation, true)
+        default:
+            break
         }
     }
 
@@ -194,5 +214,15 @@ final class TimelineViewController: ContentListViewController {
         let viewer = ImageViewerViewController(controller: controller, memo: memo, startIndex: index)
         viewer.modalPresentationStyle = .fullScreen
         present(viewer, animated: true)
+    }
+}
+
+extension TimelineViewController: UIGestureRecognizerDelegate {
+    /// Only sideways drags belong to the activity panel; vertical ones stay with the
+    /// list, which is what the delegate is for.
+    func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
+        guard let pan = recognizer as? UIPanGestureRecognizer else { return true }
+        let velocity = pan.velocity(in: view)
+        return abs(velocity.x) > abs(velocity.y)
     }
 }
