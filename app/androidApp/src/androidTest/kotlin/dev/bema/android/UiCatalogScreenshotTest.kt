@@ -13,6 +13,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performImeAction
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -96,6 +97,13 @@ class UiCatalogScreenshotTest {
         composeRule.onNodeWithContentDescription("Settings").performClick()
         settle(1400)
         capture("11-settings")
+        // Best effort: reveal the lower half of the form. It only renders if the
+        // sheet scrolls, which is the point of the capture.
+        runCatching {
+            composeRule.onNodeWithText("Save").performScrollTo()
+            settle(800)
+            capture("12-settings-workspace")
+        }
     }
 
     private fun settle(millis: Long = 600) {

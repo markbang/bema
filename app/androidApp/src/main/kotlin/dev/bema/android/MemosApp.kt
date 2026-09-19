@@ -1388,7 +1388,15 @@ private fun SettingsSheet(state: MemosAppState, controller: MemosUiController, o
             settings == null -> Box(Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) {
                 InfiniteProgressIndicator(color = Accent, size = 26.dp)
             }
-            else -> Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            else -> Column(
+                // The sheet is the longest dialog in the app; WindowDialog does not
+                // scroll, so without this its lower half — Workspace included — is
+                // laid out past the clip and reads as a sliver.
+                modifier = Modifier
+                    .imePadding()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
                 // Client-side appearance; the instance "Theme" below only restyles the
                 // Memos web UI, so it deliberately lives in its own section.
                 SettingsSection("Appearance")
@@ -1419,7 +1427,7 @@ private fun SettingsSheet(state: MemosAppState, controller: MemosUiController, o
                 SettingsSwitch("Sort by update time", displayWithUpdateTime) { displayWithUpdateTime = it }
 
                 SettingsSection("Workspace")
-                SettingsTextField("Announcement", announcement) { announcement = it }
+                SettingsTextField("Announcement", announcement, singleLine = false) { announcement = it }
                 SettingsOptionRow(
                     label = "Upload size limit",
                     valueLabel = uploadSizeLabel(maxUploadSizeMiB),
@@ -1561,14 +1569,23 @@ private fun SettingsSwitch(label: String, checked: Boolean, onChange: (Boolean) 
 }
 
 @Composable
-private fun SettingsTextField(label: String, value: String, onValueChange: (String) -> Unit) {
+private fun SettingsTextField(
+    label: String,
+    value: String,
+    singleLine: Boolean = true,
+    onValueChange: (String) -> Unit
+) {
     MiuixTextField(
         value = value,
         onValueChange = onValueChange,
         label = label,
         useLabelAsPlaceholder = true,
-        singleLine = true,
-        modifier = Modifier.fillMaxWidth()
+        singleLine = singleLine,
+        // A one-line field squashes anything longer than its width into a strip; the
+        // announcement is a paragraph, so it gets a box that wraps and scrolls.
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (singleLine) Modifier else Modifier.heightIn(min = 96.dp))
     )
 }
 
