@@ -4,6 +4,7 @@ import dev.bema.shared.data.network.createPlatformHttpClient
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.plugins.onDownload
 import io.ktor.client.request.get
 import io.ktor.client.request.parameter
 import io.ktor.serialization.kotlinx.json.json
@@ -19,6 +20,13 @@ data class AvailableUpdate(
     val sha256: String,
     val sizeBytes: Long,
     val releaseUrl: String?
+)
+
+/** Progress of an in-app update download, so the prompt can show it. */
+data class UpdateDownload(
+    val version: String,
+    val bytesRead: Long,
+    val totalBytes: Long?
 )
 
 @Serializable
@@ -74,6 +82,17 @@ class UpdateApi(
         }.body()
         return selectUpdate(current, abi, skipped, catalog.releases)
     }
+
+    /**
+     * Fetches [url] and reports (bytesRead, totalBytes?) as it arrives.
+     *
+     * The artifact is a few megabytes, so buffering it keeps the callers out of
+     * platform file APIs; the UI writes the bytes where its installer needs them.
+     */
+    suspend fun download(url: String, onProgress: (Long, Long?) -> Unit): ByteArray =
+        httpClient.get(url) {
+            onDownload { read, total -> onProgress(read, total) }
+        }.body()
 
     companion object {
         const val DEFAULT_BASE_URL = "https://mobile.talesofai.com"

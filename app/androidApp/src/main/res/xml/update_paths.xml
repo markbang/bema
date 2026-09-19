@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Paths FileProvider may hand out; just the folder the update download writes. -->
+<paths>
+    <cache-path
+        name="updates"
+        path="updates/" />
+</paths>

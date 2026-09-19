@@ -4,7 +4,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.activity.compose.LocalActivity
@@ -125,6 +124,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.core.content.FileProvider
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
@@ -171,6 +171,8 @@ import dev.bema.shared.data.session.MemosUiController
 import dev.bema.shared.data.session.formatMemoTime
 import dev.bema.shared.data.session.isLikedBy
 import dev.bema.shared.data.update.AvailableUpdate
+import dev.bema.shared.data.update.UpdateDownload
+import java.io.File
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlin.math.max
@@ -240,6 +242,7 @@ fun BemaMemosApp(controller: MemosUiController = remember { MemosTimelineControl
     // running. A scope owned by that screen cancels the load, and Compose reports
     // "rememberCoroutineScope left the composition" through the controller's error.
     val appScope = rememberCoroutineScope()
+    val context = LocalContext.current
     val dark = when (state.themeMode) {
         ThemeMode.SYSTEM -> isSystemInDarkTheme()
         ThemeMode.LIGHT -> false
@@ -270,8 +273,15 @@ fun BemaMemosApp(controller: MemosUiController = remember { MemosTimelineControl
                 if (update != null && update.version != dismissedUpdate) {
                     UpdateDialog(
                         update = update,
+                        download = state.updateDownload,
                         onDismiss = { dismissedUpdate = update.version },
-                        onSkip = { controller.skipUpdate(update.version) }
+                        onSkip = { controller.skipUpdate(update.version) },
+                        onDownload = {
+                            appScope.launch {
+                                val bytes = controller.downloadUpdate() ?: return@launch
+                                installUpdate(context, bytes, update.downloadUrl)
+                            }
+                        }
                     )
                 }
             }
@@ -1878,8 +1888,13 @@ private fun RemoveAccountDialog(account: MemosAccount, onCancel: () -> Unit, onC
 }
 
 @Composable
-private fun UpdateDialog(update: AvailableUpdate, onDismiss: () -> Unit, onSkip: () -> Unit) {
-    val context = LocalContext.current
+private fun UpdateDialog(
+    update: AvailableUpdate,
+    download: UpdateDownload?,
+    onDismiss: () -> Unit,
+    onSkip: () -> Unit,
+    onDownload: () -> Unit
+) {
     WindowDialog(
         show = true,
         title = "Update to ${update.version}",
@@ -1907,34 +1922,57 @@ private fun UpdateDialog(update: AvailableUpdate, onDismiss: () -> Unit, onSkip:
                 "${update.version} \u00b7 ${formatByteSize(update.sizeBytes)}",
                 color = TextSecondary
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                MiuixTextButton(text = "Later", onClick = onDismiss, modifier = Modifier.weight(1f))
+            val running = download?.takeIf { it.version == update.version }
+            if (running != null) {
+                // The download happens in this dialog; the system installer takes over
+                // once the bytes are there.
+                Text("Downloading\u2026 ${formatProgress(running)}", color = TextSecondary)
+                MiuixTextButton(text = "Cancel", onClick = onDismiss, modifier = Modifier.fillMaxWidth())
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    MiuixTextButton(text = "Later", onClick = onDismiss, modifier = Modifier.weight(1f))
+                    MiuixTextButton(
+                        text = "Update now",
+                        onClick = onDownload,
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.textButtonColorsPrimary()
+                    )
+                }
                 MiuixTextButton(
-                    text = "Download",
-                    onClick = { openDownload(context, update.downloadUrl) },
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.textButtonColorsPrimary()
+                    text = "Skip this version",
+                    onClick = onSkip,
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
-            MiuixTextButton(
-                text = "Skip this version",
-                onClick = onSkip,
-                modifier = Modifier.fillMaxWidth()
-            )
         }
     }
 }
 
 /**
- * Hands the APK to whatever the system uses for web links. Installing stays the
- * user's decision in the system installer, so the app needs no install permission.
+ * Writes the downloaded APK where the installer can read it and hands it over.
+ *
+ * The system installer owns the decision to install, so the app itself needs no
+ * installation rights — only the FileProvider grant below.
  */
-private fun openDownload(context: Context, url: String) {
+private fun installUpdate(context: Context, bytes: ByteArray, downloadUrl: String) {
+    val fileName = downloadUrl.substringAfterLast('/').ifBlank { "bema-update.apk" }
+    val file = File(File(context.cacheDir, "updates").apply { mkdirs() }, fileName)
+    file.writeBytes(bytes)
+    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
     runCatching {
         context.startActivity(
-            Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            Intent(Intent.ACTION_VIEW)
+                .setDataAndType(uri, "application/vnd.android.package-archive")
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
         )
     }
+}
+
+private fun formatProgress(download: UpdateDownload): String {
+    val total = download.totalBytes
+    if (total == null || total <= 0) return formatByteSize(download.bytesRead)
+    val percent = (download.bytesRead * 100 / total).coerceIn(0, 100)
+    return "$percent%"
 }
 
 private fun formatByteSize(bytes: Long): String = when {

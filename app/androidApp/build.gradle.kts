@@ -108,6 +108,10 @@ kotlin {
 dependencies {
     implementation(project(":app:sharedLogic"))
 
+    // FileProvider, which hands the downloaded update to the system installer.
+    // Declared explicitly: it also arrives transitively through Compose.
+    implementation(libs.androidx.core)
+
     // Compose
     implementation(libs.compose.ui)
     implementation(libs.compose.foundation)

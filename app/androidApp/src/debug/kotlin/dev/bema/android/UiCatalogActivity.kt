@@ -267,6 +267,8 @@ private class PreviewMemosController(private val context: Context) : MemosUiCont
 
     override fun skipUpdate(version: String) = Unit
 
+    override suspend fun downloadUpdate(): ByteArray? = null
+
     private fun user(username: String, displayName: String, avatarResource: Int) = User(
         name = "users/$username",
         role = UserRole.USER,

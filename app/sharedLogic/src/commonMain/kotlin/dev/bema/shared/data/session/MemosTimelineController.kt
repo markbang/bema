@@ -17,6 +17,7 @@ import dev.bema.shared.data.storage.PlatformKeyValueStore
 import dev.bema.shared.data.update.AppVersion
 import dev.bema.shared.data.update.AvailableUpdate
 import dev.bema.shared.data.update.UpdateApi
+import dev.bema.shared.data.update.UpdateDownload
 import dev.bema.shared.data.update.deviceAbi
 import dev.bema.shared.data.update.installedVersionName
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -73,6 +74,8 @@ data class MemosAppState(
     val hasNewerMemos: Boolean = false,
     // Set when the update host has a newer signed APK for this device's ABI.
     val availableUpdate: AvailableUpdate? = null,
+    // Progress of an in-app update download, cleared when it finishes.
+    val updateDownload: UpdateDownload? = null,
     // The client's own light/dark choice; see ThemePreference.kt.
     val themeMode: ThemeMode = ThemeMode.SYSTEM
 ) {
@@ -143,6 +146,13 @@ interface MemosUiController {
     // swallowed, because an unreachable update host must not surface as an app error.
     suspend fun checkForUpdate()
     fun skipUpdate(version: String)
+
+    /**
+     * Downloads the update [checkForUpdate] found, reporting progress through
+     * [MemosAppState.updateDownload]. Null when there is nothing to install or the
+     * transfer failed.
+     */
+    suspend fun downloadUpdate(): ByteArray?
 }
 
 @Serializable
@@ -642,6 +652,25 @@ class MemosTimelineController(
     override fun skipUpdate(version: String) {
         keyValueStore.putString(SKIPPED_UPDATE_KEY, version)
         _state.update { it.copy(availableUpdate = null) }
+    }
+
+    override suspend fun downloadUpdate(): ByteArray? {
+        val update = _state.value.availableUpdate ?: return null
+        val total = update.sizeBytes.takeIf { it > 0 }
+        _state.update { it.copy(updateDownload = UpdateDownload(update.version, 0, total)) }
+        return try {
+            updateApi.download(update.downloadUrl) { read, reported ->
+                _state.update { it.copy(updateDownload = UpdateDownload(update.version, read, reported ?: total)) }
+            }.also {
+                _state.update { it.copy(updateDownload = null) }
+            }
+        } catch (e: CancellationException) {
+            _state.update { it.copy(updateDownload = null) }
+            throw e
+        } catch (e: Exception) {
+            _state.update { it.copy(updateDownload = null, error = e.message ?: "Update download failed") }
+            null
+        }
     }
 
     private inner class AccountSession(private val account: MemosAccount) {
