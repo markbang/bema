@@ -57,7 +57,7 @@ final class RootTabBarController: UITabBarController, UITabBarControllerDelegate
         activityPanel.onDayTap = { [weak self] day in
             guard let self else { return }
             self.closeActivity()
-            Task { try? await self.controller.showDay(epochDay: day) }
+            Task { try? await self.controller.showDay(epochDay: KotlinLong(value: day)) }
         }
         activityPanel.onTagTap = { [weak self] tag in
             guard let self else { return }
