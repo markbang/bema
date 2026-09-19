@@ -27,6 +27,7 @@ import dev.bema.shared.data.model.SignInResponse
 import dev.bema.shared.data.model.UpsertReactionBody
 import dev.bema.shared.data.model.User
 import dev.bema.shared.data.model.UserNotification
+import dev.bema.shared.data.model.UserStats
 import dev.bema.shared.data.model.Visibility
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
@@ -210,6 +211,19 @@ class MemosApi(
     suspend fun currentUser(): User =
         request { token -> httpClient.get { url { api("auth", "me") }; auth(token) } }
             .body<CurrentUserResponse>().user
+
+    /**
+     * Activity statistics for one user: the tag cloud and the timestamps behind the
+     * heatmap. The path ends in `:getStats`, which is part of the route, so the
+     * colon has to survive path encoding.
+     */
+    suspend fun userStats(username: String): UserStats =
+        request { token ->
+            httpClient.get {
+                url { api("users", "$username:getStats") }
+                auth(token)
+            }
+        }.body()
 
     suspend fun signOut() {
         request { token ->

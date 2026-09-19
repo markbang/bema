@@ -378,6 +378,24 @@ data class RefreshTokenResponse(
 )
 
 @Serializable
+data class UserStats(
+    val name: String = "",
+    /** Tag name to how many memos carry it. */
+    val tagCount: Map<String, Int> = emptyMap(),
+    /** Creation time of every memo the account can see; the activity heatmap's data. */
+    val memoCreatedTimestamps: List<Instant> = emptyList(),
+    val memoTypeStats: MemoTypeStats = MemoTypeStats()
+)
+
+@Serializable
+data class MemoTypeStats(
+    val linkCount: Int = 0,
+    val codeCount: Int = 0,
+    val todoCount: Int = 0,
+    val undoCount: Int = 0
+)
+
+@Serializable
 data class InstanceProfile(
     val version: String = "",
     val instanceUrl: String = "",

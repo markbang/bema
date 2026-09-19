@@ -17,6 +17,7 @@ import dev.bema.shared.data.model.UserRole
 import dev.bema.shared.data.model.UserState
 import dev.bema.shared.data.model.Visibility
 import dev.bema.shared.data.model.WorkspaceSetting
+import dev.bema.shared.data.session.ActivityStats
 import dev.bema.shared.data.session.MemosAccount
 import dev.bema.shared.data.session.MemosAppState
 import dev.bema.shared.data.session.MemosUiController
@@ -25,6 +26,7 @@ import dev.bema.shared.data.session.ThemeMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
+import kotlin.time.Clock
 import kotlin.time.Instant
 
 class UiCatalogActivity : ComponentActivity() {
@@ -276,6 +278,30 @@ private class PreviewMemosController(private val context: Context) : MemosUiCont
                 accounts = current.accounts.map {
                     if (it.id == accountId) it.copy(instanceVersion = "0.30.0") else it
                 }
+            )
+        }
+    }
+
+    /**
+     * Stands in for the instance call so the activity panel has a plausible year to
+     * draw: a deterministic scatter rather than real data, which is what the catalog
+     * screenshots need.
+     */
+    override suspend fun refreshActivityStats() {
+        val today = Clock.System.now().epochSeconds.floorDiv(86_400L)
+        val dayCounts = (0L until 371L)
+            .map { back -> (today - back) to ((back * 37 + 11) % 13).toInt().let { if (it < 7) 0 else it - 6 } }
+            .filter { it.second > 0 }
+            .toMap()
+        _state.update {
+            it.copy(
+                activity = ActivityStats(
+                    tagCounts = listOf(
+                        "android" to 12, "native" to 9, "compose" to 7,
+                        "memos" to 5, "ui" to 4, "kotlin" to 3
+                    ),
+                    dayCounts = dayCounts
+                )
             )
         }
     }

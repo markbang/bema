@@ -18,6 +18,7 @@ import dev.bema.shared.data.update.AppVersion
 import dev.bema.shared.data.update.AvailableUpdate
 import dev.bema.shared.data.update.UpdateApi
 import dev.bema.shared.data.update.UpdateDownload
+import dev.bema.shared.deviceUtcOffsetSeconds
 import dev.bema.shared.data.update.deviceAbi
 import dev.bema.shared.data.update.installedVersionName
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -79,6 +80,8 @@ data class MemosAppState(
     val availableUpdate: AvailableUpdate? = null,
     // Progress of an in-app update download, cleared when it finishes.
     val updateDownload: UpdateDownload? = null,
+    // Tag cloud and heatmap data for the activity panel; null until fetched.
+    val activity: ActivityStats? = null,
     // The client's own light/dark choice; see ThemePreference.kt.
     val themeMode: ThemeMode = ThemeMode.SYSTEM
 ) {
@@ -155,6 +158,12 @@ interface MemosUiController {
      * an unreachable instance leaves the stored value alone.
      */
     suspend fun refreshInstanceVersion(accountId: String)
+
+    /**
+     * Refreshes the activity panel's tag cloud and heatmap for the active account.
+     * Best effort, like the version above.
+     */
+    suspend fun refreshActivityStats()
 
     /**
      * Downloads the update [checkForUpdate] found, reporting progress through
@@ -677,6 +686,20 @@ class MemosTimelineController(
             )
         }
         persistAccounts()
+    }
+
+    override suspend fun refreshActivityStats() {
+        val account = _state.value.activeAccount ?: return
+        val session = activeSessionOrNull() ?: return
+        val stats = try {
+            session.api.userStats(account.username)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            return
+        }
+        val activity = stats.toActivityStats(deviceUtcOffsetSeconds())
+        _state.update { it.copy(activity = activity) }
     }
 
     override suspend fun downloadUpdate(): ByteArray? {
