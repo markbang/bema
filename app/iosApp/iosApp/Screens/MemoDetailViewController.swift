@@ -24,6 +24,7 @@ final class MemoDetailViewController: ContentListViewController {
     )
     private let sendButton = UIButton(type: .system)
     private var panelVisible = false
+    private var isSendingComment = false
 
     init(controller: MemosTimelineController, memoName: String, startComment: Bool) {
         self.controller = controller
@@ -80,7 +81,7 @@ final class MemoDetailViewController: ContentListViewController {
         let cancel = UIButton(type: .system)
         cancel.configuration = cancelConfiguration
         cancel.addAction(UIAction { [weak self] _ in
-            guard let self else { return }
+            guard let self, !self.isSendingComment else { return }
             self.commentComposer.setText("")
             self.setCommentPanel(visible: false, animated: true)
         }, for: .touchUpInside)
@@ -115,7 +116,7 @@ final class MemoDetailViewController: ContentListViewController {
 
         commentComposer.onTextChange = { [weak self] value in
             guard let self else { return }
-            self.sendButton.isEnabled = !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            self.sendButton.isEnabled = !self.isSendingComment && !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
         sendButton.isEnabled = false
     }
@@ -143,13 +144,24 @@ final class MemoDetailViewController: ContentListViewController {
 
     private func sendComment() {
         let content = commentComposer.text
-        guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        commentComposer.setText("")
+        guard !isSendingComment, !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        isSendingComment = true
         sendButton.isEnabled = false
-        setCommentPanel(visible: false, animated: true)
+        commentComposer.isUserInteractionEnabled = false
         Task { [weak self] in
             guard let self else { return }
-            try? await self.controller.comment(content: content)
+            defer {
+                self.isSendingComment = false
+                self.commentComposer.isUserInteractionEnabled = true
+                self.sendButton.isEnabled = !self.commentComposer.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+            do {
+                try await self.controller.comment(content: content)
+                self.commentComposer.setText("")
+                self.setCommentPanel(visible: false, animated: true)
+            } catch {
+                presentError(error.localizedDescription, from: self)
+            }
         }
     }
 

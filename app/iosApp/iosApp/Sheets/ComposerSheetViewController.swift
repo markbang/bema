@@ -113,9 +113,16 @@ final class ComposerSheetViewController: UIViewController, PHPickerViewControlle
         let hasContent = !composer.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         postButton.isEnabled = (hasContent || !drafts.isEmpty) && !isPublishing
         postButton.title = isPublishing ? "Posting" : "Post"
+        navigationItem.leftBarButtonItem?.isEnabled = !isPublishing
+        isModalInPresentation = isPublishing
+        navigationController?.isModalInPresentation = isPublishing
+        composer.isUserInteractionEnabled = !isPublishing
+        visibility.isEnabled = !isPublishing
+        attachmentsStack.isUserInteractionEnabled = !isPublishing
     }
 
     private func addAttachments() {
+        guard !isPublishing else { return }
         var configuration = PHPickerConfiguration(photoLibrary: .shared())
         configuration.filter = .images
         configuration.selectionLimit = 9
@@ -193,21 +200,29 @@ final class ComposerSheetViewController: UIViewController, PHPickerViewControlle
     }
 
     private func post() {
+        guard !isPublishing else { return }
         let content = composer.text
         let attachments = drafts.map {
             PendingAttachment(filename: $0.filename, content: kotlinBytes($0.data), type: $0.type)
         }
         let index = max(visibility.selectedSegmentIndex, 0)
         let selected = index < publishVisibilities.count ? publishVisibilities[index] : .private_
-        postButton.isEnabled = false
+        isPublishing = true
+        updatePostButton()
         Task { [weak self] in
             guard let self else { return }
-            try? await self.controller.publish(
-                content: content,
-                visibility: selected,
-                pendingAttachments: attachments
-            )
-            self.dismiss(animated: true)
+            do {
+                try await self.controller.publish(
+                    content: content,
+                    visibility: selected,
+                    pendingAttachments: attachments
+                )
+                self.dismiss(animated: true)
+            } catch {
+                self.isPublishing = false
+                self.updatePostButton()
+                presentError(error.localizedDescription, from: self)
+            }
         }
     }
 }

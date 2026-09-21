@@ -31,6 +31,8 @@ import dev.bema.shared.data.model.UserStats
 import dev.bema.shared.data.model.Visibility
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
+import io.ktor.client.plugins.HttpSend
+import io.ktor.client.plugins.plugin
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.cookies.AcceptAllCookiesStorage
 import io.ktor.client.plugins.cookies.CookiesStorage
@@ -47,8 +49,11 @@ import io.ktor.client.statement.bodyAsBytes
 import io.ktor.client.statement.bodyAsText
 import io.ktor.client.statement.request
 import io.ktor.http.ContentType
+import io.ktor.http.Cookie
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.URLBuilder
+import io.ktor.http.Url
 import io.ktor.http.appendPathSegments
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
@@ -62,6 +67,9 @@ import kotlin.time.Instant
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.serialization.json.jsonObject
 
 /** Refresh this long before the access token lapses. */
 private val TOKEN_REFRESH_MARGIN = 60.seconds
@@ -78,10 +86,12 @@ class MemosApi(
     private val refreshAccessToken: suspend () -> String?,
     private val accessTokenExpiresAt: () -> Instant? = { null },
     private val onUnauthorized: suspend () -> Unit = {},
-    rawHttpClient: HttpClient = createPlatformHttpClient(),
+    private val rawHttpClient: HttpClient = createPlatformHttpClient(),
     private val cookieStorage: CookiesStorage = AcceptAllCookiesStorage()
 ) {
     private val baseUrl = normalizeInstanceUrl(instanceUrl)
+    private val instanceOrigin = Url(baseUrl)
+    private val settingsJson = Json { encodeDefaults = true; explicitNulls = false }
     private val refreshMutex = Mutex()
     private val httpClient = rawHttpClient.config {
         install(ContentNegotiation) {
@@ -91,9 +101,30 @@ class MemosApi(
             })
         }
         install(HttpCookies) {
-            storage = cookieStorage
+            storage = object : CookiesStorage {
+                override suspend fun get(requestUrl: Url): List<Cookie> =
+                    if (isInstanceOrigin(requestUrl)) cookieStorage.get(requestUrl) else emptyList()
+
+                override suspend fun addCookie(requestUrl: Url, cookie: Cookie) {
+                    if (isInstanceOrigin(requestUrl)) cookieStorage.addCookie(requestUrl, cookie)
+                }
+
+                override fun close() = cookieStorage.close()
+            }
+        }
+    }.also { client ->
+        client.plugin(HttpSend).intercept { request ->
+            // Redirects can cross origins even when the initial URL was trusted.
+            if (!isInstanceOrigin(request.url.build())) {
+                request.headers.remove(HttpHeaders.Authorization)
+                request.headers.remove(HttpHeaders.Cookie)
+            }
+            execute(request)
         }
     }
+
+    private fun isInstanceOrigin(target: Url): Boolean = target.protocol == instanceOrigin.protocol &&
+        target.host.equals(instanceOrigin.host, ignoreCase = true) && target.port == instanceOrigin.port
 
     private suspend fun request(block: suspend (String?) -> HttpResponse): HttpResponse {
         // Refresh ahead of expiry rather than after a 401: the access token is short
@@ -255,17 +286,23 @@ class MemosApi(
             }
         }.body()
 
-    suspend fun updateInstanceSetting(setting: InstanceSetting): InstanceSetting =
-        request { token ->
+    suspend fun updateInstanceSetting(setting: InstanceSetting): InstanceSetting {
+        require(setting.name.startsWith("instance/settings/")) { "Invalid instance setting name" }
+        // Memos replaces the whole resource (its update_mask is not applied).
+        // Merge only fields this client edits into a fresh, lossless server copy.
+        val current = request { token ->
+            httpClient.get { url { api(setting.name) }; auth(token) }
+        }.body<JsonObject>()
+        val edits = settingsJson.encodeToJsonElement(setting).jsonObject
+        val body = mergeSettingFields(current, edits)
+        return request { token ->
             httpClient.patch {
-                // `body: "setting"` binds the body to the setting itself, so wrapping
-                // it in a request object makes the server reject the unknown field:
-                // 400 could not find field "setting" in InstanceSetting.
                 url { api(setting.name) }
                 auth(token)
-                jsonBody(setting)
+                jsonBody(body)
             }
         }.body()
+    }
 
     suspend fun batchGetUsers(usernames: List<String>): List<dev.bema.shared.data.model.User> {
         if (usernames.isEmpty()) return emptyList()
@@ -468,14 +505,22 @@ class MemosApi(
             }
         }.body()
 
-    suspend fun getUrlBytes(url: String): ByteArray =
-        request { token ->
-            httpClient.get(url) { auth(token) }
-        }.bodyAsBytes()
+    suspend fun getUrlBytes(url: String): ByteArray {
+        val target = Url(url)
+        require(target.protocol.name == "http" || target.protocol.name == "https") { "Unsupported resource URL" }
+        val sameOrigin = isInstanceOrigin(target)
+        // The raw client has no account cookie plugin either: cookies ignore ports,
+        // so omitting only the Bearer header would still leak credentials cross-origin.
+        return if (sameOrigin) {
+            request { token -> httpClient.get(url) { auth(token) } }.bodyAsBytes()
+        } else {
+            rawHttpClient.get(url).requireSuccess().bodyAsBytes()
+        }
+    }
 
     suspend fun getAttachmentBytes(attachment: Attachment, thumbnail: Boolean = false): ByteArray {
         if (attachment.externalLink.isNotBlank()) {
-            return httpClient.get(attachment.externalLink).requireSuccess().bodyAsBytes()
+            return rawHttpClient.get(attachment.externalLink).requireSuccess().bodyAsBytes()
         }
         return request { token ->
             httpClient.get {
@@ -497,8 +542,20 @@ class MemosApi(
         }.buildString()
     }
 
-    suspend fun close() = httpClient.close()
+    suspend fun close() {
+        httpClient.close()
+        rawHttpClient.close()
+    }
 }
+
+private fun mergeSettingFields(current: JsonObject, edits: JsonObject): JsonObject = JsonObject(
+    current.toMutableMap().apply {
+        edits.forEach { (key, value) ->
+            val previous = this[key]
+            this[key] = if (previous is JsonObject && value is JsonObject) mergeSettingFields(previous, value) else value
+        }
+    }
+)
 
 fun normalizeInstanceUrl(value: String): String {
     val trimmed = value.trim().trimEnd('/')

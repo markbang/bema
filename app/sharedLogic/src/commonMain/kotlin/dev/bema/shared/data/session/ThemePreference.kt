@@ -1,9 +1,8 @@
 package dev.bema.shared.data.session
 
 /**
- * The client's own light/dark preference, kept separate from the instance's
- * `customProfile.appearance` (which only restyles the Memos web UI). It lives in
- * the shared module so Android and iOS read the same value, and it is persisted
+ * The client's own light/dark preference, independent of instance settings.
+ * It lives in the shared module so Android and iOS read the same value, and is persisted
  * in the key-value store so it survives a relaunch.
  *
  * [ThemeMode.SYSTEM] defers the choice to the OS; resolving it needs the

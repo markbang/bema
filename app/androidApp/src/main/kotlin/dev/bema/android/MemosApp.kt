@@ -42,7 +42,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.asPaddingValues
@@ -111,7 +110,6 @@ import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.MutableFloatState
 import androidx.compose.runtime.mutableFloatStateOf
@@ -121,6 +119,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import kotlin.coroutines.cancellation.CancellationException
@@ -160,22 +159,15 @@ import dev.bema.shared.data.model.CustomProfile
 import dev.bema.shared.data.model.GeneralSetting
 import dev.bema.shared.data.model.InstanceSetting
 import dev.bema.shared.data.model.Memo
-import dev.bema.shared.data.model.MemoRelatedSetting
 import dev.bema.shared.data.model.User
 import dev.bema.shared.data.model.Visibility
-import dev.bema.shared.data.model.WorkspaceSetting
-import dev.bema.shared.data.session.AppearanceOptions
+import dev.bema.shared.data.model.StorageSetting
 import dev.bema.shared.data.session.SettingOption
 import dev.bema.shared.data.session.ThemeMode
 import dev.bema.shared.data.session.ThemeModeOptions
-import dev.bema.shared.data.session.appearanceLabel
-import dev.bema.shared.data.session.canonicalAppearance
-import dev.bema.shared.data.session.canonicalLocale
 import dev.bema.shared.data.session.canonicalThemeMode
 import dev.bema.shared.data.session.themeModeLabel
 import dev.bema.shared.data.session.themeModeValue
-import dev.bema.shared.data.session.localeLabel
-import dev.bema.shared.data.session.localeOptionsFor
 import dev.bema.shared.data.session.uploadSizeLabel
 import dev.bema.shared.data.session.uploadSizeOptionsFor
 import dev.bema.shared.data.session.HEART_REACTION
@@ -414,7 +406,7 @@ private fun SignInScreen(state: MemosAppState, onSignIn: (String, String, String
         DarkField(password, { password = it }, "Password", secure = true)
         Spacer(Modifier.height(20.dp))
         MiuixButton(
-            enabled = !state.isLoading,
+            enabled = !state.isLoading && instance.isNotBlank() && username.isNotBlank() && password.isNotBlank(),
             onClick = { onSignIn(instance, username, password) },
             modifier = Modifier.fillMaxWidth(),
             cornerRadius = 24.dp
@@ -675,9 +667,7 @@ private fun TimelineHeader(
             modifier = Modifier
                 .size(40.dp)
                 .semantics { contentDescription = "Switch account" }
-                .pointerInput(Unit) {
-                    detectTapGestures(onLongPress = { onAccounts() })
-                },
+                .clickable(onClick = onAccounts),
             contentAlignment = Alignment.Center
         ) {
             AccountAvatar(account, account?.visibleName ?: "M", Modifier.fillMaxSize(), controller)
@@ -797,14 +787,19 @@ private fun TimelineScreen(
             }
         }
     }
-    val shouldLoadMore by remember { derivedStateOf {
-        val info = listState.layoutInfo
-        state.canLoadMore && (info.visibleItemsInfo.lastOrNull()?.index ?: 0) >= info.totalItemsCount - 4
-    } }
+    val latestState by rememberUpdatedState(state)
     LaunchedEffect(Unit) {
         if (state.timeline.isEmpty()) controller.refreshTimeline() else controller.revalidateTimeline()
     }
-    LaunchedEffect(shouldLoadMore) { if (shouldLoadMore) controller.loadMore() }
+    LaunchedEffect(controller, listState) {
+        snapshotFlow {
+            val info = listState.layoutInfo
+            latestState.nextPageToken to (latestState.canLoadMore && latestState.error == null &&
+                (info.visibleItemsInfo.lastOrNull()?.index ?: 0) >= info.totalItemsCount - 4)
+        }.collect { (_, shouldLoadMore) ->
+            if (shouldLoadMore) controller.loadMore()
+        }
+    }
     LaunchedEffect(listState) {
         snapshotFlow { listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0 }
             .collect { atTop -> if (atTop) headerOffsetPx.floatValue = 0f }
@@ -859,6 +854,16 @@ private fun TimelineScreen(
                 }
             }
         }
+        state.timelineEmptyMessage?.let { message ->
+            item {
+                Text(
+                    message,
+                    color = TextSecondary,
+                    modifier = Modifier.fillMaxWidth().padding(28.dp),
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
         items(state.timeline, key = { it.name }) { memo ->
             MemoTweet(
                 memo,
@@ -903,7 +908,7 @@ private fun SearchScreen(
     }
 
     // Debounce: wait for the keyboard to settle, then hit listMemos with a CEL filter.
-    LaunchedEffect(query) {
+    LaunchedEffect(query, state.activeAccountId) {
         val trimmed = query.trim()
         if (trimmed.isEmpty()) {
             results = emptyList()
@@ -1211,6 +1216,7 @@ private fun ComposerDialog(state: MemosAppState, controller: MemosUiController, 
     var showPreview by remember { mutableStateOf(false) }
     var visibility by rememberSaveable { mutableStateOf(Visibility.PRIVATE.name) }
     var attachments by remember { mutableStateOf(emptyList<PendingAttachment>()) }
+    var postError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
@@ -1225,111 +1231,116 @@ private fun ComposerDialog(state: MemosAppState, controller: MemosUiController, 
             }.getOrNull()
         }
     }
-    val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     WindowDialog(
         show = true,
         title = "New memo",
         backgroundColor = InkElevated,
-        onDismissRequest = onDismiss
+        onDismissRequest = { if (!state.isPublishing) onDismiss() }
     ) {
-        Column(
-            modifier = Modifier
-                .imePadding()
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            MarkdownModeToggle(showPreview = showPreview, onPreviewChange = { showPreview = it })
-            if (showPreview) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 140.dp, max = 420.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(EditorSurface)
-                        .verticalScroll(rememberScrollState())
-                        .padding(16.dp)
-                ) {
-                    if (editor.text.isBlank()) {
-                        Text("Nothing to preview", color = TextSecondary)
-                    } else {
-                        MarkdownText(editor.text)
+        Column(Modifier.imePadding(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(
+                modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                MarkdownModeToggle(showPreview = showPreview, onPreviewChange = { showPreview = it })
+                if (showPreview) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 140.dp, max = 420.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(EditorSurface)
+                            .verticalScroll(rememberScrollState())
+                            .padding(16.dp)
+                    ) {
+                        if (editor.text.isBlank()) {
+                            Text("Nothing to preview", color = TextSecondary)
+                        } else {
+                            MarkdownText(editor.text)
+                        }
                     }
+                } else {
+                    // Keep the draft stable while its snapshot is being published.
+                    MarkdownEditor(editor, Modifier.fillMaxWidth().heightIn(min = 140.dp, max = 420.dp)) {
+                        if (!state.isPublishing) editor = it
+                    }
+                    MarkdownToolbar(editor) { if (!state.isPublishing) editor = it }
                 }
-            } else {
-                // Grows with content; long memos scroll inside the field instead of
-                // pushing the action buttons out of reach.
-                MarkdownEditor(editor, Modifier.fillMaxWidth().heightIn(min = 140.dp, max = 420.dp)) { editor = it }
-                MarkdownToolbar(editor) { editor = it }
-            }
 
-            VisibilityPicker(visibility) { visibility = it }
+                VisibilityPicker(visibility) { if (!state.isPublishing) visibility = it }
 
-            if (attachments.isNotEmpty()) {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(attachments) { attachment ->
-                        Box {
-                            if (attachment.type.startsWith("image/")) {
-                                AsyncImage(
-                                    attachment.content,
-                                    attachment.filename,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.size(78.dp).clip(RoundedCornerShape(10.dp))
-                                )
-                            } else {
-                                Box(
-                                    modifier = Modifier
-                                        .size(78.dp)
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .background(InkLine)
-                                        .padding(8.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(attachment.filename, color = TextPrimary, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                if (attachments.isNotEmpty()) {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(attachments) { attachment ->
+                            Box {
+                                if (attachment.type.startsWith("image/")) {
+                                    AsyncImage(
+                                        attachment.content,
+                                        attachment.filename,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.size(78.dp).clip(RoundedCornerShape(10.dp))
+                                    )
+                                } else {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(78.dp)
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(InkLine)
+                                            .padding(8.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(attachment.filename, color = TextPrimary, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                                    }
                                 }
-                            }
-                            MiuixIconButton(
-                                onClick = { attachments = attachments.filter { it != attachment } },
-                                modifier = Modifier
-                                    .align(Alignment.TopEnd)
-                                    .size(24.dp)
-                                    .background(Color.Black.copy(alpha = 0.6f), CircleShape)
-                            ) {
-                                Text("×", color = Color.White, fontWeight = FontWeight.Bold)
+                                MiuixIconButton(
+                                    onClick = { if (!state.isPublishing) attachments = attachments.filter { it != attachment } },
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .size(24.dp)
+                                        .background(Color.Black.copy(alpha = 0.6f), CircleShape)
+                                ) {
+                                    Text("×", color = Color.White, fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            Row(
-                modifier = Modifier.clickable { picker.launch("*/*") }.padding(vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                MiuixIcon(MiuixIcons.Photos, contentDescription = "Add attachments", tint = Accent)
-                Spacer(Modifier.width(8.dp))
-                Text("Add attachments", color = Accent)
+                Row(
+                    modifier = Modifier.clickable(enabled = !state.isPublishing) { picker.launch("*/*") }.padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    MiuixIcon(MiuixIcons.Photos, contentDescription = "Add attachments", tint = Accent)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Add attachments", color = Accent)
+                }
             }
-
-            if (!imeVisible) {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    MiuixTextButton(text = "Cancel", onClick = onDismiss, modifier = Modifier.weight(1f))
-                    MiuixTextButton(
-                        text = if (state.isPublishing) "Posting" else "Post",
-                        enabled = (editor.text.isNotBlank() || attachments.isNotEmpty()) && !state.isPublishing,
-                        onClick = {
-                            scope.launch {
+            postError?.let { Text(it, color = Danger) }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                MiuixTextButton(text = "Cancel", onClick = onDismiss, modifier = Modifier.weight(1f), enabled = !state.isPublishing)
+                MiuixTextButton(
+                    text = if (state.isPublishing) "Posting" else "Post",
+                    enabled = (editor.text.isNotBlank() || attachments.isNotEmpty()) && !state.isPublishing,
+                    onClick = {
+                        postError = null
+                        scope.launch {
+                            try {
                                 controller.publish(
                                     editor.text,
                                     visibility = Visibility.valueOf(visibility),
                                     pendingAttachments = attachments
                                 )
                                 onDismiss()
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                postError = e.message ?: "Publish failed. Your draft has been kept."
                             }
-                        },
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.textButtonColorsPrimary()
-                    )
-                }
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.textButtonColorsPrimary()
+                )
             }
         }
     }
@@ -1446,50 +1457,39 @@ private fun MarkdownButton(symbol: String, description: String, onClick: () -> U
 
 @Composable
 private fun SettingsSheet(state: MemosAppState, controller: MemosUiController, onDismiss: () -> Unit) {
+    val scope = rememberCoroutineScope()
     var settings by remember { mutableStateOf<InstanceSetting?>(null) }
     var loadError by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
     var saveError by remember { mutableStateOf<String?>(null) }
     var showConfirm by remember { mutableStateOf(false) }
 
-    // Draft copy: only the fields the client can actually manage on Memos v0.22+.
+    // Only expose fields supported by the current instance settings API.
     var instanceTitle by remember { mutableStateOf("") }
     var instanceDescription by remember { mutableStateOf("") }
     var instanceLogoUrl by remember { mutableStateOf("") }
-    var instanceLocale by remember { mutableStateOf("") }
-    var instanceAppearance by remember { mutableStateOf("") }
     var disallowRegistration by remember { mutableStateOf(false) }
-    var disallowPasswordLogin by remember { mutableStateOf(false) }
-    var enableLinkMetadata by remember { mutableStateOf(true) }
-    var displayWithUpdateTime by remember { mutableStateOf(false) }
-    var announcement by remember { mutableStateOf("") }
+    var disallowPasswordAuth by remember { mutableStateOf(false) }
     var maxUploadSizeMiB by remember { mutableStateOf("0") }
-    var atomFeedBadgeUrl by remember { mutableStateOf("") }
     var disallowChangeUsername by remember { mutableStateOf(false) }
     var disallowChangeNickname by remember { mutableStateOf(false) }
-    var localePicker by remember { mutableStateOf(false) }
-    var appearancePicker by remember { mutableStateOf(false) }
     var uploadPicker by remember { mutableStateOf(false) }
     var themePicker by remember { mutableStateOf(false) }
 
     LaunchedEffect(state.activeAccountId) {
+        settings = null
+        loadError = null
         try {
             val loaded = controller.loadInstanceSettings()
             settings = loaded
             instanceTitle = loaded.generalSetting?.customProfile?.title.orEmpty()
             instanceDescription = loaded.generalSetting?.customProfile?.description.orEmpty()
             instanceLogoUrl = loaded.generalSetting?.customProfile?.logoUrl.orEmpty()
-            instanceLocale = canonicalLocale(loaded.generalSetting?.customProfile?.locale.orEmpty())
-            instanceAppearance = canonicalAppearance(loaded.generalSetting?.customProfile?.appearance.orEmpty())
             disallowRegistration = loaded.generalSetting?.disallowUserRegistration ?: false
-            disallowPasswordLogin = loaded.generalSetting?.disallowPasswordLogin ?: false
-            enableLinkMetadata = loaded.memoRelatedSetting?.enableLinkMetadata ?: true
-            displayWithUpdateTime = loaded.memoRelatedSetting?.displayWithUpdateTime ?: false
-            announcement = loaded.workspaceSetting?.announcement.orEmpty()
-            maxUploadSizeMiB = (loaded.workspaceSetting?.maxUploadSizeMiB ?: 0L).toString()
-            atomFeedBadgeUrl = loaded.workspaceSetting?.atomFeedBadgeUrl.orEmpty()
-            disallowChangeUsername = loaded.workspaceSetting?.disallowChangeUsername ?: false
-            disallowChangeNickname = loaded.workspaceSetting?.disallowChangeNickname ?: false
+            disallowPasswordAuth = loaded.generalSetting?.disallowPasswordAuth ?: false
+            maxUploadSizeMiB = (loaded.storageSetting?.uploadSizeLimitMb ?: 0L).toString()
+            disallowChangeUsername = loaded.generalSetting?.disallowChangeUsername ?: false
+            disallowChangeNickname = loaded.generalSetting?.disallowChangeNickname ?: false
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -1501,82 +1501,60 @@ private fun SettingsSheet(state: MemosAppState, controller: MemosUiController, o
         show = true,
         title = "Settings",
         backgroundColor = InkElevated,
-        onDismissRequest = onDismiss
+        onDismissRequest = { if (!saving) onDismiss() }
     ) {
-        when {
-            loadError != null -> Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                Text(loadError!!, color = Danger)
-                MiuixTextButton(text = "Close", onClick = onDismiss, modifier = Modifier.fillMaxWidth())
-            }
-            settings == null -> Box(Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) {
-                InfiniteProgressIndicator(color = Accent, size = 26.dp)
-            }
-            else -> Column(
-                // The sheet is the longest dialog in the app; WindowDialog does not
-                // scroll, so without this its lower half — Workspace included — is
-                // laid out past the clip and reads as a sliver.
-                modifier = Modifier
-                    .imePadding()
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                // Client-side appearance; the instance "Theme" below only restyles the
-                // Memos web UI, so it deliberately lives in its own section.
-                SettingsSection("Appearance")
-                SettingsOptionRow(
-                    label = "App theme",
-                    valueLabel = themeModeLabel(state.themeMode),
-                    onClick = { themePicker = true }
-                )
-                SettingsSection("General")
-                SettingsTextField("Instance title", instanceTitle) { instanceTitle = it }
-                SettingsTextField("Description", instanceDescription) { instanceDescription = it }
-                SettingsTextField("Logo URL", instanceLogoUrl) { instanceLogoUrl = it }
-                SettingsOptionRow(
-                    label = "Language",
-                    valueLabel = localeLabel(instanceLocale),
-                    onClick = { localePicker = true }
-                )
-                SettingsOptionRow(
-                    label = "Instance theme",
-                    valueLabel = appearanceLabel(instanceAppearance),
-                    onClick = { appearancePicker = true }
-                )
-                SettingsSwitch("Disallow user registration", disallowRegistration) { disallowRegistration = it }
-                SettingsSwitch("Disallow password sign-in", disallowPasswordLogin) { disallowPasswordLogin = it }
+        Column(
+            Modifier.imePadding().verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            SettingsSection("Appearance")
+            SettingsOptionRow(
+                label = "App theme",
+                valueLabel = themeModeLabel(state.themeMode),
+                onClick = { themePicker = true }
+            )
+            when {
+                loadError != null -> Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Text(loadError!!, color = Danger)
+                    MiuixTextButton(text = "Close", onClick = onDismiss, modifier = Modifier.fillMaxWidth())
+                }
+                settings == null -> Box(Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) {
+                    InfiniteProgressIndicator(color = Accent, size = 26.dp)
+                }
+                else -> Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    SettingsSection("General")
+                    SettingsTextField("Instance title", instanceTitle) { instanceTitle = it }
+                    SettingsTextField("Description", instanceDescription) { instanceDescription = it }
+                    SettingsTextField("Logo URL", instanceLogoUrl) { instanceLogoUrl = it }
+                    SettingsSwitch("Disallow user registration", disallowRegistration) { disallowRegistration = it }
+                    SettingsSwitch("Disallow password sign-in", disallowPasswordAuth) { disallowPasswordAuth = it }
+                    SettingsSwitch("Disallow changing username", disallowChangeUsername) { disallowChangeUsername = it }
+                    SettingsSwitch("Disallow changing nickname", disallowChangeNickname) { disallowChangeNickname = it }
 
-                SettingsSection("Memo")
-                SettingsSwitch("Fetch link metadata", enableLinkMetadata) { enableLinkMetadata = it }
-                SettingsSwitch("Sort by update time", displayWithUpdateTime) { displayWithUpdateTime = it }
-
-                SettingsSection("Workspace")
-                SettingsTextField("Announcement", announcement, singleLine = false) { announcement = it }
-                SettingsOptionRow(
-                    label = "Upload size limit",
-                    valueLabel = uploadSizeLabel(maxUploadSizeMiB),
-                    onClick = { uploadPicker = true }
-                )
-                SettingsTextField("Atom feed badge URL", atomFeedBadgeUrl) { atomFeedBadgeUrl = it }
-                SettingsSwitch("Disallow changing username", disallowChangeUsername) { disallowChangeUsername = it }
-                SettingsSwitch("Disallow changing nickname", disallowChangeNickname) { disallowChangeNickname = it }
-
-                saveError?.let { Text(it, color = Danger) }
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    MiuixTextButton(text = "Cancel", onClick = onDismiss, modifier = Modifier.weight(1f), enabled = !saving)
-                    MiuixTextButton(
-                        text = if (saving) "Saving" else "Save",
-                        enabled = !saving,
-                        onClick = { showConfirm = true },
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.textButtonColorsPrimary()
+                    SettingsSection("Storage")
+                    SettingsOptionRow(
+                        label = "Upload size limit",
+                        valueLabel = uploadSizeLabel(maxUploadSizeMiB),
+                        onClick = { uploadPicker = true }
                     )
+
+                    saveError?.let { Text(it, color = Danger) }
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        MiuixTextButton(text = "Cancel", onClick = onDismiss, modifier = Modifier.weight(1f), enabled = !saving)
+                        MiuixTextButton(
+                            text = if (saving) "Saving" else "Save",
+                            enabled = !saving,
+                            onClick = { showConfirm = true },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.textButtonColorsPrimary()
+                        )
+                    }
                 }
             }
         }
     }
 
     if (showConfirm) {
-        val scope = rememberCoroutineScope()
         WindowDialog(
             show = true,
             title = "Apply to instance?",
@@ -1595,39 +1573,29 @@ private fun SettingsSheet(state: MemosAppState, controller: MemosUiController, o
                             saveError = null
                             scope.launch {
                                 try {
-                                    // Rebuild from the loaded settings so fields the UI does not
-                                    // edit (e.g. memo reactions) survive the whole-setting replace.
+                                    // The API merges these editable fields into the current server resource.
                                     controller.saveInstanceSettings(
                                         general = (settings?.generalSetting ?: GeneralSetting()).copy(
                                             customProfile = (settings?.generalSetting?.customProfile ?: CustomProfile()).copy(
                                                 title = instanceTitle.trim(),
                                                 description = instanceDescription.trim(),
-                                                logoUrl = instanceLogoUrl.trim(),
-                                                locale = instanceLocale.trim(),
-                                                appearance = instanceAppearance.trim()
+                                                logoUrl = instanceLogoUrl.trim()
                                             ),
                                             disallowUserRegistration = disallowRegistration,
-                                            disallowPasswordLogin = disallowPasswordLogin
-                                        ),
-                                        memoRelated = (settings?.memoRelatedSetting ?: MemoRelatedSetting()).copy(
-                                            enableLinkMetadata = enableLinkMetadata,
-                                            displayWithUpdateTime = displayWithUpdateTime
-                                        ),
-                                        workspace = (settings?.workspaceSetting ?: WorkspaceSetting()).copy(
-                                            announcement = announcement.trim(),
-                                            maxUploadSizeMiB = maxUploadSizeMiB.trim().toLongOrNull() ?: 0L,
-                                            atomFeedBadgeUrl = atomFeedBadgeUrl.trim(),
+                                            disallowPasswordAuth = disallowPasswordAuth,
                                             disallowChangeUsername = disallowChangeUsername,
                                             disallowChangeNickname = disallowChangeNickname
-                                        )
+                                        ),
+                                        storage = StorageSetting(uploadSizeLimitMb = maxUploadSizeMiB.toLong())
                                     )
                                     onDismiss()
                                 } catch (e: CancellationException) {
                                     throw e
                                 } catch (e: Exception) {
                                     saveError = e.message ?: "Failed to save settings"
+                                } finally {
+                                    saving = false
                                 }
-                                saving = false
                             }
                         },
                         modifier = Modifier.weight(1f),
@@ -1636,24 +1604,6 @@ private fun SettingsSheet(state: MemosAppState, controller: MemosUiController, o
                 }
             }
         }
-    }
-    if (localePicker) {
-        SettingsOptionPicker(
-            title = "Language",
-            options = localeOptionsFor(instanceLocale),
-            selected = instanceLocale,
-            onSelect = { instanceLocale = it },
-            onDismiss = { localePicker = false }
-        )
-    }
-    if (appearancePicker) {
-        SettingsOptionPicker(
-            title = "Theme",
-            options = AppearanceOptions,
-            selected = instanceAppearance,
-            onSelect = { instanceAppearance = it },
-            onDismiss = { appearancePicker = false }
-        )
     }
     if (themePicker) {
         SettingsOptionPicker(
@@ -2295,6 +2245,8 @@ private fun MemoDetailScreen(
     var comment by remember { mutableStateOf(TextFieldValue()) }
     var showCommentPreview by remember { mutableStateOf(false) }
     var showCommentBox by remember { mutableStateOf(startComment) }
+    var sendingComment by remember { mutableStateOf(false) }
+    var commentError by remember { mutableStateOf<String?>(null) }
     val commentProgress = remember { Animatable(0f) }
     val memo = state.selectedMemo ?: return
     LaunchedEffect(startComment) {
@@ -2405,9 +2357,11 @@ private fun MemoDetailScreen(
                     MarkdownToolbar(comment) { comment = it }
                 }
                 Spacer(Modifier.height(12.dp))
+                commentError?.let { Text(it, color = Danger) }
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     MiuixTextButton(
                         text = "Cancel",
+                        enabled = !sendingComment,
                         onClick = {
                             comment = TextFieldValue()
                             showCommentPreview = false
@@ -2416,14 +2370,28 @@ private fun MemoDetailScreen(
                         modifier = Modifier.weight(1f)
                     )
                     MiuixTextButton(
-                        text = "Reply",
-                        enabled = comment.text.isNotBlank(),
+                        text = if (sendingComment) "Sending" else "Reply",
+                        enabled = comment.text.isNotBlank() && !sendingComment,
                         onClick = {
                             val body = comment.text
-                            comment = TextFieldValue()
-                            showCommentPreview = false
-                            showCommentBox = false
-                            scope.launch { controller.comment(body) }
+                            sendingComment = true
+                            commentError = null
+                            scope.launch {
+                                try {
+                                    controller.comment(body)
+                                    if (comment.text == body) {
+                                        comment = TextFieldValue()
+                                        showCommentPreview = false
+                                        showCommentBox = false
+                                    }
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    commentError = e.message ?: "Reply failed. Your draft has been kept."
+                                } finally {
+                                    sendingComment = false
+                                }
+                            }
                         },
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.textButtonColorsPrimary()

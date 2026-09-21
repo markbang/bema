@@ -164,7 +164,11 @@ final class RootTabBarController: UITabBarController, UITabBarControllerDelegate
         isSignInPresented = true
         let signIn = SignInViewController(controller: controller)
         signIn.modalPresentationStyle = .fullScreen
-        signIn.onSignedIn = { [weak self] in self?.isSignInPresented = false }
+        signIn.onSignedIn = { [weak self, weak signIn] in
+            signIn?.dismiss(animated: true) {
+                self?.isSignInPresented = false
+            }
+        }
         present(signIn, animated: false)
     }
 }

@@ -17,22 +17,13 @@ final class SettingsViewController: UIViewController {
     private let titleField = UITextField.memo(memoPlaceholder: "Instance title")
     private let descriptionField = UITextField.memo(memoPlaceholder: "Description")
     private let logoField = UITextField.memo(memoPlaceholder: "Logo URL")
-    private let announcementField = UITextField.memo(memoPlaceholder: "Announcement")
-    private let atomFeedField = UITextField.memo(memoPlaceholder: "Atom feed badge URL")
-
-    private let languageRow = MenuRow(label: "Language")
-    private let themeRow = MenuRow(label: "Instance theme")
     private let appThemeRow = MenuRow(label: "App theme")
     private let uploadRow = MenuRow(label: "Upload size limit")
 
-    private var languageValue = "en"
-    private var themeValue = "system"
     private var appThemeValue = "system"
     private var uploadValue = "0"
     private var disallowRegistration = false
-    private var disallowPasswordLogin = false
-    private var enableLinkMetadata = true
-    private var displayWithUpdateTime = false
+    private var disallowPasswordAuth = false
     private var disallowChangeUsername = false
     private var disallowChangeNickname = false
 
@@ -59,6 +50,7 @@ final class SettingsViewController: UIViewController {
             menu: nil
         )
         save.tintColor = Palette.accent
+        save.isEnabled = false
         navigationItem.rightBarButtonItem = save
 
         contentStack.axis = .vertical
@@ -81,6 +73,7 @@ final class SettingsViewController: UIViewController {
             contentStack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -40)
         ])
 
+        buildAppearanceSection()
         observation = IosInterop.shared.observeState(flow: controller.state) { [weak self] state in
             guard let self else { return }
             self.siteTitle = state.activeAccount?.siteTitle ?? "the instance"
@@ -99,15 +92,26 @@ final class SettingsViewController: UIViewController {
     }
 
     private func load() {
+        loaded = nil
+        navigationItem.rightBarButtonItem?.isEnabled = false
+        contentStack.arrangedSubviews.forEach {
+            contentStack.removeArrangedSubview($0)
+            $0.removeFromSuperview()
+        }
+        buildAppearanceSection()
         Task { [weak self] in
             guard let self else { return }
             do {
                 let settings = try await self.controller.loadInstanceSettings()
                 self.loaded = settings
                 self.applyLoaded(settings)
+                self.navigationItem.rightBarButtonItem?.isEnabled = true
             } catch {
-                presentError(error.localizedDescription, from: self)
-                self.dismiss(animated: true)
+                let message = UILabel()
+                message.text = "Instance settings could not be loaded. App theme is still available.\n\(error.localizedDescription)"
+                message.textColor = Palette.danger
+                message.numberOfLines = 0
+                self.contentStack.addArrangedSubview(message)
             }
         }
     }
@@ -117,19 +121,11 @@ final class SettingsViewController: UIViewController {
         titleField.text = profile?.title ?? ""
         descriptionField.text = profile?.description ?? ""
         logoField.text = profile?.logoUrl ?? ""
-        // The instance may report a locale or appearance the client does not know,
-        // so normalise it the same way the Android UI does.
-        languageValue = InstanceSettingsPresentationKt.canonicalLocale(raw: profile?.locale ?? "")
-        themeValue = InstanceSettingsPresentationKt.canonicalAppearance(raw: profile?.appearance ?? "")
         disallowRegistration = settings.generalSetting?.disallowUserRegistration ?? false
-        disallowPasswordLogin = settings.generalSetting?.disallowPasswordLogin ?? false
-        enableLinkMetadata = settings.memoRelatedSetting?.enableLinkMetadata ?? true
-        displayWithUpdateTime = settings.memoRelatedSetting?.displayWithUpdateTime ?? false
-        announcementField.text = settings.workspaceSetting?.announcement ?? ""
-        uploadValue = String(settings.workspaceSetting?.maxUploadSizeMiB ?? 0)
-        atomFeedField.text = settings.workspaceSetting?.atomFeedBadgeUrl ?? ""
-        disallowChangeUsername = settings.workspaceSetting?.disallowChangeUsername ?? false
-        disallowChangeNickname = settings.workspaceSetting?.disallowChangeNickname ?? false
+        disallowPasswordAuth = settings.generalSetting?.disallowPasswordAuth ?? false
+        uploadValue = String(settings.storageSetting?.uploadSizeLimitMb ?? 0)
+        disallowChangeUsername = settings.generalSetting?.disallowChangeUsername ?? false
+        disallowChangeNickname = settings.generalSetting?.disallowChangeNickname ?? false
         buildForm()
     }
 
@@ -139,22 +135,7 @@ final class SettingsViewController: UIViewController {
             $0.removeFromSuperview()
         }
 
-        languageRow.setOptions(tuples(InstanceSettingsPresentationKt.localeOptionsFor(current: languageValue)), selected: languageValue)
-        languageRow.onSelect = { [weak self] value in
-            self?.languageValue = value
-            self?.refreshMenuRows()
-        }
-        themeRow.setOptions(tuples(InstanceSettingsPresentationKt.AppearanceOptions), selected: themeValue)
-        themeRow.onSelect = { [weak self] value in
-            self?.themeValue = value
-            self?.refreshMenuRows()
-        }
-        appThemeRow.setOptions(tuples(ThemePreferenceKt.ThemeModeOptions), selected: appThemeValue)
-        appThemeRow.onSelect = { [weak self] value in
-            guard let self else { return }
-            self.appThemeValue = value
-            self.controller.setThemeMode(mode: ThemePreferenceKt.canonicalThemeMode(raw: value))
-        }
+        buildAppearanceSection()
         uploadRow.setOptions(tuples(InstanceSettingsPresentationKt.uploadSizeOptionsFor(current: uploadValue)), selected: uploadValue)
         uploadRow.onSelect = { [weak self] value in
             self?.uploadValue = value
@@ -162,46 +143,40 @@ final class SettingsViewController: UIViewController {
         }
 
         let rows: [UIView] = [
-            sectionLabel("Appearance"),
-            appThemeRow,
             sectionLabel("General"),
             titleField,
             descriptionField,
             logoField,
-            languageRow,
-            themeRow,
             switchRow("Disallow user registration", isOn: disallowRegistration) { [weak self] value in
                 self?.disallowRegistration = value
             },
-            switchRow("Disallow password sign-in", isOn: disallowPasswordLogin) { [weak self] value in
-                self?.disallowPasswordLogin = value
+            switchRow("Disallow password sign-in", isOn: disallowPasswordAuth) { [weak self] value in
+                self?.disallowPasswordAuth = value
             },
-
-            sectionLabel("Memo"),
-            switchRow("Fetch link metadata", isOn: enableLinkMetadata) { [weak self] value in
-                self?.enableLinkMetadata = value
-            },
-            switchRow("Sort by update time", isOn: displayWithUpdateTime) { [weak self] value in
-                self?.displayWithUpdateTime = value
-            },
-
-            sectionLabel("Workspace"),
-            announcementField,
-            uploadRow,
-            atomFeedField,
             switchRow("Disallow changing username", isOn: disallowChangeUsername) { [weak self] value in
                 self?.disallowChangeUsername = value
             },
             switchRow("Disallow changing nickname", isOn: disallowChangeNickname) { [weak self] value in
                 self?.disallowChangeNickname = value
-            }
+            },
+            sectionLabel("Storage"),
+            uploadRow
         ]
         rows.forEach(contentStack.addArrangedSubview)
     }
 
+    private func buildAppearanceSection() {
+        appThemeRow.setOptions(tuples(ThemePreferenceKt.ThemeModeOptions), selected: appThemeValue)
+        appThemeRow.onSelect = { [weak self] value in
+            guard let self else { return }
+            self.appThemeValue = value
+            self.controller.setThemeMode(mode: ThemePreferenceKt.canonicalThemeMode(raw: value))
+        }
+        contentStack.addArrangedSubview(sectionLabel("Appearance"))
+        contentStack.addArrangedSubview(appThemeRow)
+    }
+
     private func refreshMenuRows() {
-        languageRow.setOptions(tuples(InstanceSettingsPresentationKt.localeOptionsFor(current: languageValue)), selected: languageValue)
-        themeRow.setOptions(tuples(InstanceSettingsPresentationKt.AppearanceOptions), selected: themeValue)
         appThemeRow.setOptions(tuples(ThemePreferenceKt.ThemeModeOptions), selected: appThemeValue)
         uploadRow.setOptions(tuples(InstanceSettingsPresentationKt.uploadSizeOptionsFor(current: uploadValue)), selected: uploadValue)
     }
@@ -241,7 +216,7 @@ final class SettingsViewController: UIViewController {
     }
 
     private func confirmSave() {
-        guard let loaded else { return }
+        guard loaded != nil else { return }
         let alert = UIAlertController(
             title: "Apply to instance?",
             message: "These changes apply to \(siteTitle) and affect every user.",
@@ -249,52 +224,45 @@ final class SettingsViewController: UIViewController {
         )
         alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
         alert.addAction(UIAlertAction(title: "Apply", style: .default) { [weak self] _ in
-            self?.performSave(loaded)
+            self?.performSave()
         })
         present(alert, animated: true)
     }
 
-    /// Rebuilds the whole setting from the loaded copy, so fields the form does
-    /// not edit (memo reactions) survive the replace.
-    private func performSave(_ loaded: InstanceSetting) {
-        guard !isSaving else { return }
+    /// The API merges editable fields into the current server resource.
+    private func performSave() {
+        guard !isSaving, let uploadSize = Int64(uploadValue), uploadSize >= 0 else { return }
         isSaving = true
+        navigationItem.rightBarButtonItem?.isEnabled = false
+        navigationItem.leftBarButtonItem?.isEnabled = false
+        navigationController?.isModalInPresentation = true
 
         let general = GeneralSetting(
             customProfile: CustomProfile(
                 title: titleField.trimmedText,
                 description: descriptionField.trimmedText,
-                logoUrl: logoField.trimmedText,
-                locale: languageValue.trimmingCharacters(in: .whitespacesAndNewlines),
-                appearance: themeValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                logoUrl: logoField.trimmedText
             ),
             disallowUserRegistration: disallowRegistration,
-            disallowPasswordLogin: disallowPasswordLogin
-        )
-        let memoRelated = MemoRelatedSetting(
-            enableLinkMetadata: enableLinkMetadata,
-            displayWithUpdateTime: displayWithUpdateTime,
-            reactions: loaded.memoRelatedSetting?.reactions
-        )
-        let workspace = WorkspaceSetting(
-            announcement: announcementField.trimmedText,
-            maxUploadSizeMiB: Int64(uploadValue.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0,
-            atomFeedBadgeUrl: atomFeedField.trimmedText,
+            disallowPasswordAuth: disallowPasswordAuth,
             disallowChangeUsername: disallowChangeUsername,
             disallowChangeNickname: disallowChangeNickname
         )
+        let storage = StorageSetting(uploadSizeLimitMb: uploadSize)
 
         Task { [weak self] in
             guard let self else { return }
             do {
                 try await self.controller.saveInstanceSettings(
                     general: general,
-                    memoRelated: memoRelated,
-                    workspace: workspace
+                    storage: storage
                 )
                 self.dismiss(animated: true)
             } catch {
                 self.isSaving = false
+                self.navigationItem.rightBarButtonItem?.isEnabled = true
+                self.navigationItem.leftBarButtonItem?.isEnabled = true
+                self.navigationController?.isModalInPresentation = false
                 presentError(error.localizedDescription, from: self)
             }
         }

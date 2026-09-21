@@ -77,7 +77,9 @@ final class SignInViewController: UIViewController {
         button.isEnabled = !state.isLoading
         button.configuration?.title = state.isLoading ? "Connecting…" : "Sign in"
         if state.activeAccount != nil {
-            onSignedIn?()
+            let completion = onSignedIn
+            onSignedIn = nil
+            completion?()
             return
         }
         if let error = state.error {

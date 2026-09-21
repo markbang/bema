@@ -4,11 +4,10 @@ import dev.bema.shared.data.model.Attachment
 import dev.bema.shared.data.model.GeneralSetting
 import dev.bema.shared.data.model.InstanceSetting
 import dev.bema.shared.data.model.Memo
-import dev.bema.shared.data.model.MemoRelatedSetting
 import dev.bema.shared.data.model.Reaction
 import dev.bema.shared.data.model.User
 import dev.bema.shared.data.model.Visibility
-import dev.bema.shared.data.model.WorkspaceSetting
+import dev.bema.shared.data.model.StorageSetting
 import dev.bema.shared.data.network.MemosApi
 import dev.bema.shared.data.network.PersistentCookieStorage
 import dev.bema.shared.data.network.normalizeInstanceUrl
@@ -91,7 +90,12 @@ data class MemosAppState(
 ) {
     val activeAccount: MemosAccount? get() = accounts.firstOrNull { it.id == activeAccountId }
     val orderedAccounts: List<MemosAccount> get() = accounts.sortedByDescending { it.pinned }
-    val canLoadMore: Boolean get() = nextPageToken.isNotBlank() && !isLoadingMore
+    val canLoadMore: Boolean get() = nextPageToken.isNotBlank() && !isLoading && !isLoadingMore
+    val timelineEmptyMessage: String? get() = when {
+        isLoading || error != null || timeline.isNotEmpty() -> null
+        timelineFilter != null -> "No memos on this day. Clear the date to see all memos."
+        else -> "No memos yet. Write your first memo to get started."
+    }
 }
 
 interface MemosUiController {
@@ -125,9 +129,9 @@ interface MemosUiController {
     @Throws(Exception::class)
     suspend fun saveInstanceSettings(
         general: GeneralSetting,
-        memoRelated: MemoRelatedSetting,
-        workspace: WorkspaceSetting
+        storage: StorageSetting
     )
+    /** Throws on failure; editors must retain their draft until this returns successfully. */
     @Throws(Exception::class)
     suspend fun publish(
         content: String,
@@ -138,6 +142,7 @@ interface MemosUiController {
     suspend fun openMemo(name: String)
     fun closeMemo()
     fun setThemeMode(mode: ThemeMode)
+    /** Throws on failure so the reply composer can retain its draft. */
     @Throws(Exception::class)
     suspend fun comment(content: String)
     @Throws(Exception::class)
@@ -200,14 +205,45 @@ class MemosTimelineController(
     private val _state = MutableStateFlow(loadState())
     override val state: StateFlow<MemosAppState> = _state
 
-    override suspend fun addAccount(instanceUrl: String, username: String, password: String) {
-        val normalized = normalizeInstanceUrl(instanceUrl)
-        require(normalized.isNotBlank()) { "Instance URL is required" }
-        require(username.isNotBlank()) { "Username is required" }
-        require(password.isNotBlank()) { "Password is required" }
+    // Generations also reject A → B → A responses, not just a different account ID.
+    private var accountGeneration = 0L
+    private var timelineGeneration = 0L
+    private var detailGeneration = 0L
+    private var revalidatingGeneration: Long? = null
 
+    private fun activateAccount(accountId: String) {
+        accountGeneration++
+        timelineGeneration++
+        detailGeneration++
+        val cached = loadCachedTimeline(accountId)
+        _state.update {
+            it.copy(
+                activeAccountId = accountId,
+                timeline = cached?.memos.orEmpty(),
+                nextPageToken = cached?.nextPageToken.orEmpty(),
+                selectedMemo = null,
+                selectedComments = emptyList(),
+                userProfiles = emptyMap(),
+                activity = null,
+                timelineFilter = null,
+                hasNewerMemos = false,
+                isLoading = false,
+                isLoadingMore = false,
+                isPublishing = false,
+                error = null
+            )
+        }
+        persistAccounts()
+    }
+
+    override suspend fun addAccount(instanceUrl: String, username: String, password: String) {
+        var generation = accountGeneration
         setBusy(isLoading = true)
         try {
+            val normalized = normalizeInstanceUrl(instanceUrl)
+            require(normalized.isNotBlank()) { "Instance URL is required" }
+            require(username.isNotBlank()) { "Username is required" }
+            require(password.isNotBlank()) { "Password is required" }
             val accountId = accountId(normalized, username)
             val draft = MemosAccount(id = accountId, instanceUrl = normalized, username = username.trim())
             val session = sessions.getOrPut(accountId) { AccountSession(draft) }
@@ -222,46 +258,33 @@ class MemosTimelineController(
                 instanceVersion = session.loadInstanceVersion(),
                 lastSignedInAt = Clock.System.now()
             )
+            if (generation != accountGeneration) return
             sessions[accountId] = session
             _state.update { current ->
                 current.copy(
-                    accounts = (current.accounts.filterNot { it.id == account.id } + account).sortedBy { it.instanceUrl + it.username },
-                    activeAccountId = account.id,
-                    timeline = emptyList(),
-                    nextPageToken = "",
-                    selectedMemo = null,
-                    selectedComments = emptyList(),
-                    error = null
+                    accounts = (current.accounts.filterNot { it.id == account.id } + account).sortedBy { it.instanceUrl + it.username }
                 )
             }
-            persistAccounts()
+            activateAccount(account.id)
+            generation = accountGeneration
             refreshTimeline("")
         } catch (e: CancellationException) {
             // Cancellation is not a sign-in failure; reporting it as one turned a
             // Compose scope teardown into a visible "…left the composition" error.
             throw e
         } catch (e: Exception) {
-            _state.update { it.copy(error = e.message ?: "Sign in failed") }
+            if (generation == accountGeneration) {
+                _state.update { it.copy(error = e.message ?: "Sign in failed") }
+            }
         } finally {
-            setBusy(isLoading = false)
+            if (generation == accountGeneration) setBusy(isLoading = false)
         }
     }
 
     override suspend fun selectAccount(accountId: String) {
         if (_state.value.activeAccountId == accountId) return
         require(_state.value.accounts.any { it.id == accountId }) { "Unknown account" }
-        val cached = loadCachedTimeline(accountId)
-        _state.update {
-            it.copy(
-                activeAccountId = accountId,
-                timeline = cached?.memos.orEmpty(),
-                nextPageToken = cached?.nextPageToken.orEmpty(),
-                selectedMemo = null,
-                selectedComments = emptyList(),
-                error = null
-            )
-        }
-        persistAccounts()
+        activateAccount(accountId)
         refreshTimeline("")
     }
 
@@ -286,80 +309,74 @@ class MemosTimelineController(
 
     override suspend fun removeAccount(accountId: String) {
         sessions.remove(accountId)?.clearCookies()
+        keyValueStore.remove(TIMELINE_KEY_PREFIX + accountId)
+        val wasActive = _state.value.activeAccountId == accountId
         _state.update { current ->
-            val accounts = current.accounts.filterNot { it.id == accountId }
-            val active = when {
-                current.activeAccountId != accountId -> current.activeAccountId
-                accounts.isNotEmpty() -> accounts.first().id
-                else -> ""
-            }
-            current.copy(
-                accounts = accounts,
-                activeAccountId = active,
-                timeline = if (active.isBlank()) emptyList() else current.timeline,
-                nextPageToken = if (active.isBlank()) "" else current.nextPageToken,
-                selectedMemo = null,
-                selectedComments = emptyList(),
-                error = null
-            )
+            current.copy(accounts = current.accounts.filterNot { it.id == accountId })
         }
-        persistAccounts()
-        if (_state.value.activeAccountId.isNotBlank()) refreshTimeline("")
+        if (wasActive) {
+            activateAccount(_state.value.accounts.firstOrNull()?.id.orEmpty())
+            refreshTimeline("")
+        } else {
+            persistAccounts()
+        }
     }
 
     override suspend fun refreshTimeline(filter: String) {
         val session = activeSessionOrNull() ?: return
         val accountId = _state.value.activeAccountId
-        // A blank filter means "whatever is current": the refresh controls must not
-        // silently drop a day the user picked in the activity panel.
+        val generation = ++timelineGeneration
         val effective = filter.ifBlank { _state.value.timelineFilter?.cel.orEmpty() }
-        // Show stale content while revalidating instead of an empty loading screen.
-        setBusy(isLoading = _state.value.timeline.isEmpty())
-        runCatching {
+        // Keep stale content visible, but do not paginate it while replacing its cursor.
+        _state.update { it.copy(isLoading = true, isLoadingMore = false, error = null) }
+        try {
             val response = session.api.listMemos(filter = effective)
             val profiles = session.loadUsers(response.memos)
+            if (generation != timelineGeneration) return
             _state.update { current ->
                 current.copy(
                     timeline = response.memos,
                     nextPageToken = response.nextPageToken,
-                    selectedMemo = null,
-                    selectedComments = emptyList(),
-                    userProfiles = profiles,
+                    userProfiles = current.userProfiles + profiles,
                     hasNewerMemos = false,
                     error = null
                 )
             }
-            // Only the unfiltered list is worth keeping: caching one day would greet
-            // the next launch with that day alone.
-            if (effective.isBlank()) {
-                persistTimeline(accountId, response.memos, response.nextPageToken)
+            if (effective.isBlank()) persistTimeline(accountId, response.memos, response.nextPageToken)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (generation == timelineGeneration) {
+                _state.update { it.copy(error = e.message ?: "Failed to load timeline") }
             }
-        }.onFailure { error ->
-            // Serve the cache when offline instead of a dead-end error screen.
-            if (_state.value.timeline.isEmpty()) {
-                _state.update { it.copy(error = error.message ?: "Failed to load timeline") }
-            }
+        } finally {
+            if (generation == timelineGeneration) setBusy(isLoading = false)
         }
-        setBusy(isLoading = false)
     }
 
     override suspend fun showDay(epochDay: Long?) {
         val filter = epochDay?.let { localDayFilter(it, deviceUtcOffsetSeconds()) }
-        _state.update { it.copy(timelineFilter = filter) }
+        if (filter != _state.value.timelineFilter) {
+            _state.update {
+                it.copy(timelineFilter = filter, timeline = emptyList(), nextPageToken = "", hasNewerMemos = false)
+            }
+        }
         refreshTimeline("")
     }
-
-    private var revalidating = false
 
     // Silent refresh on timeline entry: if the server has newer memos than the
     // visible (cached) list, surface a banner instead of shifting content mid-read.
     override suspend fun revalidateTimeline() {
         val session = activeSessionOrNull() ?: return
-        if (revalidating || _state.value.isLoading) return
-        revalidating = true
+        if (revalidatingGeneration == timelineGeneration || _state.value.isLoading || _state.value.isLoadingMore) return
+        val accountId = _state.value.activeAccountId
+        val generation = timelineGeneration
+        val filter = _state.value.timelineFilter?.cel.orEmpty()
+        revalidatingGeneration = generation
         try {
-            val response = session.api.listMemos()
+            val response = session.api.listMemos(filter = filter)
             val profiles = session.loadUsers(response.memos)
+            if (generation != timelineGeneration) return
             _state.update { current ->
                 val hasNewer = current.timeline.isNotEmpty() &&
                     response.memos.firstOrNull()?.name != current.timeline.first().name
@@ -371,36 +388,48 @@ class MemosTimelineController(
                     error = null
                 )
             }
-            if (!_state.value.hasNewerMemos) {
-                persistTimeline(_state.value.activeAccountId, _state.value.timeline, _state.value.nextPageToken)
+            if (filter.isBlank() && !_state.value.hasNewerMemos) {
+                persistTimeline(accountId, _state.value.timeline, _state.value.nextPageToken)
             }
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
             // Silent revalidation stays quiet on failure; the cache remains visible.
+        } finally {
+            if (revalidatingGeneration == generation) revalidatingGeneration = null
         }
-        revalidating = false
     }
 
     override suspend fun loadMore() {
         val session = activeSessionOrNull() ?: return
+        if (!_state.value.canLoadMore) return
         val token = _state.value.nextPageToken
-        if (token.isBlank() || _state.value.isLoadingMore) return
+        val accountId = _state.value.activeAccountId
+        val filter = _state.value.timelineFilter?.cel.orEmpty()
+        val generation = ++timelineGeneration
         _state.update { it.copy(isLoadingMore = true) }
-        runCatching {
-            val response = session.api.listMemos(pageToken = token)
+        try {
+            val response = session.api.listMemos(pageToken = token, filter = filter)
             val profiles = session.loadUsers(response.memos)
+            if (generation != timelineGeneration) return
             _state.update {
                 it.copy(
-                    timeline = it.timeline + response.memos,
+                    timeline = (it.timeline + response.memos).distinctBy { memo -> memo.name },
                     nextPageToken = response.nextPageToken,
                     userProfiles = it.userProfiles + profiles,
                     error = null
                 )
             }
-            persistTimeline(_state.value.activeAccountId, _state.value.timeline, _state.value.nextPageToken)
-        }.onFailure { error -> _state.update { it.copy(error = error.message ?: "Failed to load more") } }
-        _state.update { it.copy(isLoadingMore = false) }
+            if (filter.isBlank()) persistTimeline(accountId, _state.value.timeline, _state.value.nextPageToken)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (generation == timelineGeneration) {
+                _state.update { it.copy(error = e.message ?: "Failed to load more") }
+            }
+        } finally {
+            if (generation == timelineGeneration) _state.update { it.copy(isLoadingMore = false) }
+        }
     }
 
     // Memos has no dedicated search endpoint; the web app searches by passing a
@@ -408,34 +437,41 @@ class MemosTimelineController(
     override suspend fun search(query: String): List<Memo> {
         val trimmed = query.trim()
         val session = activeSessionOrNull() ?: return emptyList()
+        val generation = accountGeneration
         val response = session.api.listMemos(pageSize = 50, filter = "content.contains(\"${celEscape(trimmed)}\")")
         val profiles = session.loadUsers(response.memos)
+        if (generation != accountGeneration) throw CancellationException("Account changed")
         _state.update { it.copy(userProfiles = it.userProfiles + profiles) }
         return response.memos
     }
 
     override suspend fun loadInstanceSettings(): InstanceSetting {
         val session = activeSessionOrNull() ?: error("No active account")
-        return session.api.instanceSetting("GENERAL")
+        val generation = accountGeneration
+        val general = session.api.instanceSetting("GENERAL")
+        val storage = session.api.instanceSetting("STORAGE")
+        if (generation != accountGeneration) throw CancellationException("Account changed")
+        return general.copy(
+            generalSetting = requireNotNull(general.generalSetting) { "Missing GENERAL settings" },
+            storageSetting = requireNotNull(storage.storageSetting) { "Missing STORAGE settings" }
+        )
     }
 
     override suspend fun saveInstanceSettings(
         general: GeneralSetting,
-        memoRelated: MemoRelatedSetting,
-        workspace: WorkspaceSetting
+        storage: StorageSetting
     ) {
+        require(storage.uploadSizeLimitMb >= 0) { "Upload size limit cannot be negative" }
         val account = _state.value.activeAccount ?: error("No active account")
         val session = activeSessionOrNull() ?: error("No active account")
-        session.api.updateInstanceSetting(InstanceSetting(name = "instanceSettings/GENERAL", generalSetting = general))
-        session.api.updateInstanceSetting(InstanceSetting(name = "instanceSettings/MEMO_RELATED", memoRelatedSetting = memoRelated))
-        session.api.updateInstanceSetting(InstanceSetting(name = "instanceSettings/WORKSPACE", workspaceSetting = workspace))
+        session.api.updateInstanceSetting(InstanceSetting(name = "instance/settings/GENERAL", generalSetting = general))
+        session.api.updateInstanceSetting(InstanceSetting(name = "instance/settings/STORAGE", storageSetting = storage))
         // Custom profile (title/logo) feeds the header and account switcher; refresh the cached account.
         val refreshed = account.copy(
             siteTitle = general.customProfile?.title?.ifBlank { "Memos" } ?: "Memos",
             siteLogoUrl = general.customProfile?.logoUrl.orEmpty()
         )
         if (refreshed != account) {
-            sessions[account.id] = AccountSession(refreshed)
             _state.update { current ->
                 current.copy(accounts = current.accounts.map { if (it.id == refreshed.id) refreshed else it })
             }
@@ -452,49 +488,62 @@ class MemosTimelineController(
         pendingAttachments: List<PendingAttachment>
     ) {
         val body = content.trim()
-        if (body.isBlank() && pendingAttachments.isEmpty()) return
-        val session = activeSessionOrNull() ?: return
+        require(body.isNotBlank() || pendingAttachments.isNotEmpty()) { "Write a memo or add an attachment" }
+        val session = activeSessionOrNull() ?: error("No active account")
+        check(!_state.value.isPublishing) { "A memo is already being published" }
+        val accountId = _state.value.activeAccountId
+        val generation = accountGeneration
         _state.update { it.copy(isPublishing = true) }
-        runCatching {
+        try {
             val attachments = pendingAttachments.map { upload ->
                 session.api.createAttachment(upload.filename, upload.content, upload.type)
             }
             val memo = session.api.createMemo(body, visibility, attachments = attachments)
-            _state.update {
-                it.copy(
-                    timeline = listOf(memo) + it.timeline,
-                    hasNewerMemos = false,
-                    error = null
-                )
+            if (generation != accountGeneration) return
+            if (_state.value.timelineFilter == null) {
+                _state.update {
+                    it.copy(
+                        timeline = (listOf(memo) + it.timeline).distinctBy { item -> item.name },
+                        hasNewerMemos = false,
+                        error = null
+                    )
+                }
+                persistTimeline(accountId, _state.value.timeline, _state.value.nextPageToken)
+            } else {
+                keyValueStore.remove(TIMELINE_KEY_PREFIX + accountId)
             }
-            persistTimeline(_state.value.activeAccountId, _state.value.timeline, _state.value.nextPageToken)
-        }.onFailure { error -> _state.update { it.copy(error = error.message ?: "Publish failed") } }
-        _state.update { it.copy(isPublishing = false) }
+        } finally {
+            // Failure propagates to the editor, which must keep the draft for retry.
+            if (generation == accountGeneration) _state.update { it.copy(isPublishing = false) }
+        }
     }
 
     override suspend fun openMemo(name: String) {
         val session = activeSessionOrNull() ?: return
         // Render the memo we already have right away so tapping a post responds
         // instantly; the fresh copy and its replies replace it when the network returns.
+        val generation = ++detailGeneration
         val cached = _state.value.timeline.firstOrNull { it.name == name }
-        if (cached != null) {
-            _state.update { it.copy(selectedMemo = cached, selectedComments = emptyList(), error = null) }
-        } else {
-            setBusy(isLoading = true)
-        }
+        _state.update { it.copy(selectedMemo = cached, selectedComments = emptyList(), error = null) }
         try {
             val memo = session.api.getMemo(name)
             val comments = session.api.listComments(name).memos
-            _state.update { it.copy(selectedMemo = memo, selectedComments = comments, error = null) }
+            val profiles = session.loadUsers(listOf(memo) + comments)
+            if (generation != detailGeneration) return
+            _state.update {
+                it.copy(selectedMemo = memo, selectedComments = comments, userProfiles = it.userProfiles + profiles, error = null)
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            _state.update { it.copy(error = e.message ?: "Failed to open memo") }
+            if (generation == detailGeneration) {
+                _state.update { it.copy(error = e.message ?: "Failed to open memo") }
+            }
         }
-        setBusy(isLoading = false)
     }
 
     override fun closeMemo() {
+        detailGeneration++
         _state.update { it.copy(selectedMemo = null, selectedComments = emptyList()) }
     }
 
@@ -505,23 +554,26 @@ class MemosTimelineController(
     }
 
     override suspend fun comment(content: String) {
-        val parent = _state.value.selectedMemo ?: return
+        val parent = _state.value.selectedMemo ?: error("Open a memo before replying")
         val body = content.trim()
-        if (body.isBlank()) return
-        val session = activeSessionOrNull() ?: return
-        runCatching {
-            val comment = session.api.createComment(parent.name, body, parent.visibility)
+        require(body.isNotBlank()) { "Write a reply" }
+        val session = activeSessionOrNull() ?: error("No active account")
+        val generation = detailGeneration
+        val comment = session.api.createComment(parent.name, body, parent.visibility)
+        if (generation == detailGeneration) {
             _state.update { it.copy(selectedComments = it.selectedComments + comment, error = null) }
-        }.onFailure { error -> _state.update { it.copy(error = error.message ?: "Comment failed") } }
+        }
     }
 
     override suspend fun react(memo: Memo, reactionType: String) {
         val account = _state.value.activeAccount ?: return
         val session = activeSessionOrNull() ?: return
+        val generation = accountGeneration
         // Serialised: a second tap that read the placeholder added below would
         // otherwise be sent as a delete of a reaction that does not exist, which
         // Memos answers with `400 invalid reaction ID "local"`.
         reactionMutex.withLock {
+            if (generation != accountGeneration) return@withLock
             // The live list, not the caller's snapshot: a placeholder has no server
             // name, so it must never be treated as a reaction to withdraw.
             val previous = (_state.value.memoNamed(memo.name)?.reactions ?: memo.reactions)
@@ -542,6 +594,7 @@ class MemosTimelineController(
                     session.api.deleteReaction(existing.name)
                 } else {
                     val reaction = session.api.upsertReaction(memo.name, reactionType)
+                    if (generation != accountGeneration) return@withLock
                     val current = _state.value.memoNamed(memo.name)?.reactions.orEmpty()
                     _state.update {
                         it.withMemoReactions(
@@ -553,7 +606,9 @@ class MemosTimelineController(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _state.update { it.withMemoReactions(memo.name, previous).copy(error = e.message ?: "Reaction failed") }
+                if (generation == accountGeneration) {
+                    _state.update { it.withMemoReactions(memo.name, previous).copy(error = e.message ?: "Reaction failed") }
+                }
             }
         }
     }
@@ -652,7 +707,7 @@ class MemosTimelineController(
 
     // Cap the persisted list so the encrypted store stays small; the newest page is what matters offline.
     private fun persistTimeline(accountId: String, memos: List<Memo>, nextPageToken: String) {
-        if (accountId.isBlank() || memos.isEmpty()) return
+        if (accountId.isBlank()) return
         runCatching {
             val snapshot = CachedTimeline(
                 memos = memos.take(CACHED_MEMO_LIMIT),
@@ -712,6 +767,7 @@ class MemosTimelineController(
     override suspend fun refreshActivityStats() {
         val account = _state.value.activeAccount ?: return
         val session = activeSessionOrNull() ?: return
+        val generation = accountGeneration
         val stats = try {
             session.api.userStats(account.username)
         } catch (e: CancellationException) {
@@ -719,6 +775,7 @@ class MemosTimelineController(
         } catch (_: Exception) {
             return
         }
+        if (generation != accountGeneration) return
         val activity = stats.toActivityStats(deviceUtcOffsetSeconds())
         _state.update { it.copy(activity = activity) }
     }
@@ -751,7 +808,11 @@ class MemosTimelineController(
             accessTokenProvider = { accessToken },
             refreshAccessToken = { refreshToken() },
             accessTokenExpiresAt = { accessTokenExpiresAt },
-            onUnauthorized = { _state.update { it.copy(error = "Session expired for ${account.username} — sign in again") } },
+            onUnauthorized = {
+                if (_state.value.activeAccountId == account.id) {
+                    _state.update { it.copy(error = "Session expired for ${account.username} — sign in again") }
+                }
+            },
             cookieStorage = cookieStorage
         )
 
@@ -770,10 +831,14 @@ class MemosTimelineController(
             api.instanceProfile().version
         }.getOrDefault("")
 
-        suspend fun loadUsers(memos: List<Memo>): Map<String, User> = runCatching {
+        suspend fun loadUsers(memos: List<Memo>): Map<String, User> = try {
             api.batchGetUsers(memos.map { it.creator.substringAfterLast('/') })
                 .associateBy { it.username }
-        }.getOrDefault(emptyMap())
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            emptyMap()
+        }
 
         suspend fun refreshToken(): String? = runCatching {
             val response = api.refresh()

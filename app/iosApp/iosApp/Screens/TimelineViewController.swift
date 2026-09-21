@@ -122,6 +122,11 @@ final class TimelineViewController: ContentListViewController {
         items.append(contentsOf: state.timeline.map(Item.memo))
         if state.isLoadingMore { items.append(.loading) }
         self.items = items
+        if let message = state.timelineEmptyMessage {
+            showPlaceholder(message)
+        } else {
+            clearPlaceholder()
+        }
         tableView.reloadData()
         if refreshControl.isRefreshing, !state.isLoading { refreshControl.endRefreshing() }
     }

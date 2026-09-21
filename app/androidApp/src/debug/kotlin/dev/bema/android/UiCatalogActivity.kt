@@ -9,14 +9,13 @@ import dev.bema.shared.data.model.CustomProfile
 import dev.bema.shared.data.model.GeneralSetting
 import dev.bema.shared.data.model.InstanceSetting
 import dev.bema.shared.data.model.Memo
-import dev.bema.shared.data.model.MemoRelatedSetting
 import dev.bema.shared.data.model.MemoState
 import dev.bema.shared.data.model.Reaction
 import dev.bema.shared.data.model.User
 import dev.bema.shared.data.model.UserRole
 import dev.bema.shared.data.model.UserState
 import dev.bema.shared.data.model.Visibility
-import dev.bema.shared.data.model.WorkspaceSetting
+import dev.bema.shared.data.model.StorageSetting
 import dev.bema.shared.data.session.ActivityStats
 import dev.bema.shared.data.session.MemosAccount
 import dev.bema.shared.data.session.TagCount
@@ -163,27 +162,20 @@ private class PreviewMemosController(private val context: Context) : MemosUiCont
         _state.value.timeline.filter { it.content.contains(query, ignoreCase = true) }
 
     override suspend fun loadInstanceSettings(): InstanceSetting = InstanceSetting(
-        name = "instanceSettings/GENERAL",
+        name = "instance/settings/GENERAL",
         generalSetting = GeneralSetting(
             customProfile = CustomProfile(
                 title = "Bema Notes",
-                description = "自己的数据，自己的实例",
-                locale = "zh-CN",
-                appearance = "dark"
+                description = "自己的数据，自己的实例"
             ),
             disallowUserRegistration = true
         ),
-        memoRelatedSetting = MemoRelatedSetting(enableLinkMetadata = true),
-        workspaceSetting = WorkspaceSetting(
-            announcement = "欢迎来到 Bema Notes。",
-            maxUploadSizeMiB = 32
-        )
+        storageSetting = StorageSetting(uploadSizeLimitMb = 32)
     )
 
     override suspend fun saveInstanceSettings(
         general: GeneralSetting,
-        memoRelated: MemoRelatedSetting,
-        workspace: WorkspaceSetting
+        storage: StorageSetting
     ) = Unit
 
     override suspend fun publish(content: String, visibility: Visibility, pendingAttachments: List<PendingAttachment>) {

@@ -81,7 +81,7 @@ class UiCatalogScreenshotTest {
         composeRule.onNodeWithText("Cancel").performClick()
         settle()
 
-        composeRule.onNodeWithContentDescription("Switch account").performTouchInput { longClick() }
+        composeRule.onNodeWithContentDescription("Switch account").performClick()
         settle(1000)
         capture("08-accounts")
         composeRule.onNodeWithText("Daily Memos").performTouchInput { longClick() }
