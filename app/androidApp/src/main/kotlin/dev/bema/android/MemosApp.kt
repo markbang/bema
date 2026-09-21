@@ -444,8 +444,8 @@ private fun TimelineShell(state: MemosAppState, controller: MemosUiController) {
     var viewerBackInProgress by remember { mutableStateOf(false) }
     val headerHeightPx = remember { mutableFloatStateOf(0f) }
     val headerOffsetPx = remember { mutableFloatStateOf(0f) }
-    // Activity panel: a sideways drag on the content reveals it (the timeline has no
-    // horizontal gesture of its own), and it snaps open or shut when the drag ends.
+    // Swipes toggle the panel; its position belongs only to the open/close animation,
+    // so a short gesture cannot leave it partially exposed.
     val activityOffset = remember { Animatable(0f) }
     var activityOpen by remember { mutableStateOf(false) }
     var activityWidthPx by remember { mutableFloatStateOf(0f) }
@@ -455,11 +455,24 @@ private fun TimelineShell(state: MemosAppState, controller: MemosUiController) {
     LaunchedEffect(activityOpen) {
         if (activityOpen) controller.refreshActivityStats()
     }
-    val activityDrag = rememberDraggableState { delta ->
-        scope.launch {
-            activityOffset.snapTo((activityOffset.value + delta).coerceIn(0f, activityWidthPx.coerceAtLeast(1f)))
+    var activityDragDistance by remember { mutableFloatStateOf(0f) }
+    val activitySwipeThreshold = with(LocalDensity.current) { 40.dp.toPx() }
+    val activityFlingThreshold = with(LocalDensity.current) { 400.dp.toPx() }
+    val activityDrag = rememberDraggableState { delta -> activityDragDistance += delta }
+    val activityGesture = Modifier.draggable(
+        orientation = Orientation.Horizontal,
+        state = activityDrag,
+        onDragStarted = { activityDragDistance = 0f },
+        onDragStopped = { velocity ->
+            activityOpen = when {
+                velocity >= activityFlingThreshold -> true
+                velocity <= -activityFlingThreshold -> false
+                activityDragDistance >= activitySwipeThreshold -> true
+                activityDragDistance <= -activitySwipeThreshold -> false
+                else -> activityOpen
+            }
         }
-    }
+    )
     MiuixScaffold(
         containerColor = Ink,
         contentWindowInsets = WindowInsets.navigationBars,
@@ -532,11 +545,7 @@ private fun TimelineShell(state: MemosAppState, controller: MemosUiController) {
             Modifier
                 .fillMaxSize()
                 .onSizeChanged { activityWidthPx = it.width * ACTIVITY_PANEL_FRACTION }
-                .draggable(
-                    orientation = Orientation.Horizontal,
-                    state = activityDrag,
-                    onDragStopped = { activityOpen = activityOffset.value > activityWidthPx / 2f }
-                )
+                .then(activityGesture)
         ) {
             if (selectedTab == 1) {
                 SearchScreen(
@@ -608,11 +617,7 @@ private fun TimelineShell(state: MemosAppState, controller: MemosUiController) {
                                 alpha = 0.45f * (activityOffset.value / activityWidthPx.coerceAtLeast(1f))
                             )
                         )
-                        .draggable(
-                            orientation = Orientation.Horizontal,
-                            state = activityDrag,
-                            onDragStopped = { activityOpen = activityOffset.value > activityWidthPx / 2f }
-                        )
+                        .then(activityGesture)
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null
@@ -634,6 +639,7 @@ private fun TimelineShell(state: MemosAppState, controller: MemosUiController) {
                     .fillMaxHeight()
                     .width(with(LocalDensity.current) { (activityWidthPx / density).dp })
                     .offset { IntOffset((activityOffset.value - activityWidthPx).roundToInt(), 0) }
+                    .semantics { contentDescription = "Activity panel" }
             )
         }
     }
