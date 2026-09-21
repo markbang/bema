@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.0.0](https://github.com/markbang/bema/compare/v0.0.8...v1.0.0) (2026-09-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* saveInstanceSettings now accepts general and storage settings. Remove unsupported legacy instance settings fields; both native clients are updated and no user data migration is needed.
+
+### Bug Fixes
+
+* **android:** fully open and close activity panel on swipe ([1c5937f](https://github.com/markbang/bema/commit/1c5937f628097eac8a9fd0174e9e153faaa24f03))
+* preserve drafts and isolate account UI state ([5f175f2](https://github.com/markbang/bema/commit/5f175f2dfecc35ce3886820f6c7e39cb6ea7304d))
+
 ## [0.0.8](https://github.com/markbang/bema/compare/v0.0.7...v0.0.8) (2026-09-19)
 
 
