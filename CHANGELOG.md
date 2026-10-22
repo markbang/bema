@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.1.0](https://github.com/markbang/bema/compare/v1.0.0...v1.1.0) (2026-10-22)
+
+
+### Features
+
+* support Memos 26.10, live photos, and richer media ([74cfe11](https://github.com/markbang/bema/commit/74cfe1161a3704888fac89c52219c5cf06aef137))
+
+
+### Bug Fixes
+
+* **compat:** read the version before choosing an API surface ([3d560dc](https://github.com/markbang/bema/commit/3d560dc671c104c12ac8d30e9ad171152d2a13c1))
+* **ios:** capture self when loading the Live Photo movie ([70ec0f6](https://github.com/markbang/bema/commit/70ec0f6d82b89f149044500ab30b4d018097a960))
+* repair attachment imports and the iOS context menu delegate ([5cab79d](https://github.com/markbang/bema/commit/5cab79dd81d954784aa1b40d35c4e850afbcfc97))
+
 ## [1.0.0](https://github.com/markbang/bema/compare/v0.0.8...v1.0.0) (2026-09-21)
 
 
