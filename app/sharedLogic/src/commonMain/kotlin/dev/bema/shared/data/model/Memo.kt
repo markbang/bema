@@ -50,6 +50,23 @@ data class Memo(
     val space: String? = null
 ) {
     val uid: String get() = name.substringAfterLast('/')
+
+    /**
+     * The attachment that holds this motion photo's video: the attachment
+     * itself for an Android container, or the paired video for an Apple Live
+     * Photo.
+     */
+    fun motionTargetFor(attachment: Attachment): Attachment? {
+        val motion = attachment.motionMedia ?: return null
+        return when {
+            motion.hasEmbeddedVideo -> attachment
+            motion.role == MotionMediaRole.STILL && motion.groupId.isNotBlank() ->
+                attachments.firstOrNull {
+                    it.motionMedia?.groupId == motion.groupId && it.motionMedia?.role == MotionMediaRole.VIDEO
+                }
+            else -> null
+        }
+    }
 }
 
 @Serializable
@@ -77,10 +94,43 @@ data class Attachment(
     val type: String = "",
     @Serializable(with = ProtoLongSerializer::class)
     val size: Long = 0,
-    val memo: String? = null
+    val memo: String? = null,
+    val motionMedia: MotionMedia? = null
 ) {
     val uid: String get() = name.substringAfterLast('/')
     val isImage: Boolean get() = type.startsWith("image/")
+}
+
+@Serializable
+data class MotionMedia(
+    val family: MotionMediaFamily = MotionMediaFamily.UNSPECIFIED,
+    val role: MotionMediaRole = MotionMediaRole.UNSPECIFIED,
+    val groupId: String = "",
+    @Serializable(with = ProtoLongSerializer::class)
+    val presentationTimestampUs: Long = 0,
+    val hasEmbeddedVideo: Boolean = false
+)
+
+@Serializable
+enum class MotionMediaFamily {
+    @SerialName("MOTION_MEDIA_FAMILY_UNSPECIFIED")
+    UNSPECIFIED,
+    @SerialName("APPLE_LIVE_PHOTO")
+    APPLE_LIVE_PHOTO,
+    @SerialName("ANDROID_MOTION_PHOTO")
+    ANDROID_MOTION_PHOTO
+}
+
+@Serializable
+enum class MotionMediaRole {
+    @SerialName("MOTION_MEDIA_ROLE_UNSPECIFIED")
+    UNSPECIFIED,
+    @SerialName("STILL")
+    STILL,
+    @SerialName("VIDEO")
+    VIDEO,
+    @SerialName("CONTAINER")
+    CONTAINER
 }
 
 @Serializable
@@ -155,7 +205,36 @@ data class AttachmentUpload(
     val filename: String,
     /** Base64: proto JSON carries a `bytes` field as a string, not an array. */
     val content: String,
-    val type: String
+    val type: String,
+    val motionMedia: MotionMedia? = null
+)
+
+@Serializable
+data class UploadAttachmentSpec(
+    val attachment: Attachment,
+    val attachmentId: String = "",
+    @Serializable(with = ProtoLongSerializer::class)
+    val totalSize: Long = 0
+)
+
+@Serializable
+data class UploadAttachmentRequest(
+    val spec: UploadAttachmentSpec? = null,
+    val uploadId: String? = null,
+    @Serializable(with = ProtoLongSerializer::class)
+    val writeOffset: Long = 0,
+    /** Base64 chunk. */
+    val data: String? = null,
+    val finishWrite: Boolean = false
+)
+
+@Serializable
+data class UploadAttachmentResponse(
+    val uploadId: String = "",
+    @Serializable(with = ProtoLongSerializer::class)
+    val committedSize: Long = 0,
+    val maxChunkSize: Int = 0,
+    val attachment: Attachment? = null
 )
 
 @Serializable
@@ -183,14 +262,8 @@ data class MemoPatch(
 
 @Serializable
 data class ReactionInput(
-    /**
-     * The memo being reacted to, as `memos/{uid}`.
-     *
-     * Memos 0.30.0 identifies the memo by this field and ignores the path
-     * parameter; later versions bind the path and ignore this one. Sending it is
-     * therefore what works on both — verified against a 0.30.0 and a newer server.
-     */
-    val contentId: String,
+    /** Required by 0.26–0.30; removed in 0.31. */
+    val contentId: String? = null,
     val reactionType: String
 )
 
@@ -251,7 +324,9 @@ data class MemoMentionNotification(
 
 @Serializable
 data class BatchGetUsersRequest(
-    val usernames: List<String>
+    val usernames: List<String>? = null,
+    /** 26.10: resource names (`users/{user}`). */
+    val names: List<String>? = null
 )
 
 @Serializable
@@ -303,9 +378,14 @@ data class ListMemosResponse(
 
 @Serializable
 data class ListMemoCommentsResponse(
+    /** 0.22–0.31. */
     val memos: List<Memo> = emptyList(),
+    /** 26.10. */
+    val comments: List<Memo> = emptyList(),
     val nextPageToken: String = ""
-)
+) {
+    val items: List<Memo> get() = if (comments.isNotEmpty() || memos.isEmpty()) comments else memos
+}
 
 @Serializable
 data class ListMemoReactionsResponse(
@@ -339,8 +419,12 @@ data class PasswordCredentials(
 data class SignInResponse(
     val user: User = User(),
     val accessToken: String = "",
-    val accessTokenExpiresAt: Instant? = null
-)
+    val accessTokenExpiresAt: Instant? = null,
+    /** 26.10. */
+    val accessTokenExpireTime: Instant? = null
+) {
+    val expiresAt: Instant? get() = accessTokenExpiresAt ?: accessTokenExpireTime
+}
 
 @Serializable
 data class CurrentUserResponse(
@@ -350,18 +434,29 @@ data class CurrentUserResponse(
 @Serializable
 data class RefreshTokenResponse(
     val accessToken: String = "",
-    val expiresAt: Instant? = null
-)
+    val expiresAt: Instant? = null,
+    /** 26.10. */
+    val accessTokenExpireTime: Instant? = null
+) {
+    val expires: Instant? get() = expiresAt ?: accessTokenExpireTime
+}
 
 @Serializable
 data class UserStats(
     val name: String = "",
-    /** Tag name to how many memos carry it. */
+    /** 0.26–0.31. */
     val tagCount: Map<String, Int> = emptyMap(),
+    /** 26.10. */
+    val tagCounts: Map<String, Int> = emptyMap(),
     /** Creation time of every memo the account can see; the activity heatmap's data. */
     val memoCreatedTimestamps: List<Instant> = emptyList(),
+    /** 0.26–0.29 reported display time instead. */
+    val memoDisplayTimestamps: List<Instant> = emptyList(),
     val memoTypeStats: MemoTypeStats = MemoTypeStats()
-)
+) {
+    val effectiveTagCounts: Map<String, Int> get() = tagCounts.ifEmpty { tagCount }
+    val effectiveMemoTimestamps: List<Instant> get() = memoCreatedTimestamps.ifEmpty { memoDisplayTimestamps }
+}
 
 @Serializable
 data class MemoTypeStats(

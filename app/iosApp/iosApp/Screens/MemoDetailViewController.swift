@@ -207,7 +207,8 @@ final class MemoDetailViewController: ContentListViewController {
                     guard let self else { return }
                     Task { try? await self.controller.react(memo: memo, reactionType: heartReaction) }
                 },
-                openImage: { [weak self] index in self?.openImage(memo: memo, index: index) }
+                openImage: { [weak self] index in self?.openImage(memo: memo, index: index) },
+                openLive: { [weak self] attachment in self?.openLive(memo: memo, attachment: attachment) }
             )
         )
         return cell
@@ -217,5 +218,11 @@ final class MemoDetailViewController: ContentListViewController {
         let viewer = ImageViewerViewController(controller: controller, memo: memo, startIndex: index)
         viewer.modalPresentationStyle = .fullScreen
         present(viewer, animated: true)
+    }
+
+    private func openLive(memo: Memo, attachment: Attachment) {
+        let player = LivePhotoViewController(controller: controller, memo: memo, attachment: attachment)
+        player.modalPresentationStyle = .fullScreen
+        present(player, animated: true)
     }
 }

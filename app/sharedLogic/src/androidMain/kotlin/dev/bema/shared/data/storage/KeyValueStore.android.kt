@@ -49,9 +49,13 @@ actual object PlatformKeyValueStore : KeyValueStore {
         prefs().edit().remove(key).apply()
     }
 
-    private fun encryptionKey(): SecretKey {
+    private fun encryptionKey(): SecretKey = cachedKey
+
+    // KeyStore lookups are noticeably slow on a cold start; the key does not
+    // change for the life of the process.
+    private val cachedKey: SecretKey by lazy {
         val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        (keyStore.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
+        (keyStore.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return@lazy it }
 
         val specification = KeyGenParameterSpec.Builder(
             KEY_ALIAS,
@@ -60,7 +64,7 @@ actual object PlatformKeyValueStore : KeyValueStore {
             .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
             .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
             .build()
-        return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").run {
+        KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").run {
             init(specification)
             generateKey()
         }

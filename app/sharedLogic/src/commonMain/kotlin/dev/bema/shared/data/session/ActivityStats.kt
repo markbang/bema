@@ -53,11 +53,11 @@ fun todayEpochDay(): Long =
     (Clock.System.now().epochSeconds + deviceUtcOffsetSeconds()).floorDiv(SECONDS_PER_DAY)
 
 internal fun UserStats.toActivityStats(utcOffsetSeconds: Int): ActivityStats = ActivityStats(
-    tagCounts = tagCount
+    tagCounts = effectiveTagCounts
         .entries
         .sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
         .map { TagCount(it.key, it.value) },
-    dayCounts = memoCreatedTimestamps
+    dayCounts = effectiveMemoTimestamps
         .groupingBy { (it.epochSeconds + utcOffsetSeconds).floorDiv(SECONDS_PER_DAY) }
         .eachCount()
 )

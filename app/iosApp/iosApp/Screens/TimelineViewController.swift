@@ -94,6 +94,7 @@ final class TimelineViewController: ContentListViewController {
     /// Compose re-runs its load effect whenever the tab re-enters view; the tab
     /// bar controller calls this on the same transitions.
     func appear() {
+        guard state?.isLoading != true else { return }
         if state?.timeline.isEmpty ?? true {
             Task { [weak self] in
                 guard let self else { return }
@@ -212,7 +213,8 @@ final class TimelineViewController: ContentListViewController {
                         guard let self else { return }
                         Task { try? await self.controller.react(memo: memo, reactionType: heartReaction) }
                     },
-                    openImage: { [weak self] index in self?.openImage(memo: memo, index: index) }
+                    openImage: { [weak self] index in self?.openImage(memo: memo, index: index) },
+                    openLive: { [weak self] attachment in self?.openLive(memo: memo, attachment: attachment) }
                 )
             )
             return cell
@@ -228,6 +230,12 @@ final class TimelineViewController: ContentListViewController {
         let viewer = ImageViewerViewController(controller: controller, memo: memo, startIndex: index)
         viewer.modalPresentationStyle = .fullScreen
         present(viewer, animated: true)
+    }
+
+    private func openLive(memo: Memo, attachment: Attachment) {
+        let player = LivePhotoViewController(controller: controller, memo: memo, attachment: attachment)
+        player.modalPresentationStyle = .fullScreen
+        present(player, animated: true)
     }
 }
 

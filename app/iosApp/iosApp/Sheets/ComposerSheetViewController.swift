@@ -1,14 +1,21 @@
 import PhotosUI
 import SharedLogic
 import UIKit
+import UniformTypeIdentifiers
 
 /// The "New memo" sheet: markdown editor with a Write/Preview switch, the
 /// visibility picker, attachments, and Cancel/Post in the navigation bar.
 final class ComposerSheetViewController: UIViewController, PHPickerViewControllerDelegate {
-    private struct Draft {
+    private struct Part {
         let filename: String
         let data: Data
         let type: String
+        let motion: MotionMedia?
+    }
+
+    private struct Draft {
+        let parts: [Part]
+        let thumbnail: UIImage
     }
 
     private let controller: MemosTimelineController
@@ -19,6 +26,8 @@ final class ComposerSheetViewController: UIViewController, PHPickerViewControlle
     private let visibility = UISegmentedControl(items: publishVisibilityLabels)
     private let attachmentsScroll = UIScrollView()
     private let attachmentsStack = UIStackView()
+    private let progressLabel = UILabel()
+    private let progressView = UIProgressView(progressViewStyle: .default)
     private let postButton = UIBarButtonItem(title: "Post", style: .done, target: nil, action: nil)
 
     private var drafts: [Draft] = []
@@ -71,7 +80,17 @@ final class ComposerSheetViewController: UIViewController, PHPickerViewControlle
         addButton.contentHorizontalAlignment = .leading
         addButton.addAction(UIAction { [weak self] _ in self?.addAttachments() }, for: .touchUpInside)
 
-        let stack = UIStackView(arrangedSubviews: [composer, visibility, attachmentsScroll, addButton])
+        progressLabel.font = TextStyle.footnote1
+        progressLabel.textColor = Palette.textSecondary
+        progressLabel.numberOfLines = 1
+        progressLabel.isHidden = true
+        progressView.progressTintColor = Palette.accent
+        progressView.trackTintColor = Palette.inkLine
+        progressView.isHidden = true
+
+        let stack = UIStackView(arrangedSubviews: [
+            composer, visibility, attachmentsScroll, progressLabel, progressView, addButton
+        ])
         stack.axis = .vertical
         stack.spacing = 12
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -100,6 +119,7 @@ final class ComposerSheetViewController: UIViewController, PHPickerViewControlle
         observation = IosInterop.shared.observeState(flow: controller.state) { [weak self] state in
             guard let self else { return }
             self.isPublishing = state.isPublishing
+            self.applyUploadProgress(state.uploadProgress)
             self.updatePostButton()
         }
         updatePostButton()
@@ -107,6 +127,18 @@ final class ComposerSheetViewController: UIViewController, PHPickerViewControlle
 
     deinit {
         observation?.cancel()
+    }
+
+    private func applyUploadProgress(_ progress: UploadProgress?) {
+        guard let progress else {
+            progressLabel.isHidden = true
+            progressView.isHidden = true
+            return
+        }
+        progressLabel.isHidden = false
+        progressView.isHidden = false
+        progressLabel.text = "Uploading \(progress.filename)"
+        progressView.setProgress(Float(progress.fraction), animated: true)
     }
 
     private func updatePostButton() {
@@ -126,6 +158,7 @@ final class ComposerSheetViewController: UIViewController, PHPickerViewControlle
         var configuration = PHPickerConfiguration(photoLibrary: .shared())
         configuration.filter = .images
         configuration.selectionLimit = 9
+        configuration.preferredAssetRepresentationMode = .current
         let picker = PHPickerViewController(configuration: configuration)
         picker.delegate = self
         present(picker, animated: true)
@@ -138,21 +171,102 @@ final class ComposerSheetViewController: UIViewController, PHPickerViewControlle
             attachmentsStack.removeArrangedSubview($0)
             $0.removeFromSuperview()
         }
+        attachmentsScroll.isHidden = true
         for result in results {
-            result.itemProvider.loadObject(ofClass: UIImage.self) { [weak self] object, _ in
-                guard let image = object as? UIImage, let data = image.jpegData(compressionQuality: 0.88) else { return }
-                DispatchQueue.main.async {
-                    guard let self else { return }
-                    self.drafts.append(Draft(
-                        filename: "photo-\(self.drafts.count).jpg",
-                        data: data,
-                        type: "image/jpeg"
-                    ))
-                    self.attachmentsStack.addArrangedSubview(self.thumbnail(for: image))
-                    self.attachmentsScroll.isHidden = false
-                    self.updatePostButton()
-                }
+            loadDraft(from: result) { [weak self] draft in
+                guard let self, let draft else { return }
+                self.drafts.append(draft)
+                self.attachmentsStack.addArrangedSubview(self.thumbnail(for: draft.thumbnail))
+                self.attachmentsScroll.isHidden = false
+                self.updatePostButton()
             }
+        }
+    }
+
+    private func loadDraft(from result: PHPickerResult, completion: @escaping (Draft?) -> Void) {
+        let provider = result.itemProvider
+        let live = provider.hasItemConformingToTypeIdentifier(UTType.livePhoto.identifier)
+        func finish(_ draft: Draft?) {
+            DispatchQueue.main.async { completion(draft) }
+        }
+        guard live else {
+            provider.loadObject(ofClass: UIImage.self) { object, _ in
+                guard let image = object as? UIImage,
+                      let data = image.jpegData(compressionQuality: 0.88) else {
+                    finish(nil)
+                    return
+                }
+                finish(Draft(
+                    parts: [Part(filename: "photo.jpg", data: data, type: "image/jpeg", motion: nil)],
+                    thumbnail: image
+                ))
+            }
+            return
+        }
+        loadFile(provider, type: .image) { imageData, imageType, imageName in
+            guard let imageData, let image = UIImage(data: imageData) else {
+                finish(nil)
+                return
+            }
+            loadFile(provider, type: .movie) { movieData, movieType, movieName in
+                guard let movieData else {
+                    finish(Draft(
+                        parts: [Part(filename: imageName, data: imageData, type: imageType, motion: nil)],
+                        thumbnail: image
+                    ))
+                    return
+                }
+                let group = UUID().uuidString
+                let parts = [
+                    Part(
+                        filename: imageName,
+                        data: imageData,
+                        type: imageType,
+                        motion: MotionMedia(
+                            family: .appleLivePhoto,
+                            role: .still,
+                            groupId: group,
+                            presentationTimestampUs: 0,
+                            hasEmbeddedVideo: false
+                        )
+                    ),
+                    Part(
+                        filename: movieName,
+                        data: movieData,
+                        type: movieType,
+                        motion: MotionMedia(
+                            family: .appleLivePhoto,
+                            role: .video,
+                            groupId: group,
+                            presentationTimestampUs: 0,
+                            hasEmbeddedVideo: false
+                        )
+                    )
+                ]
+                finish(Draft(parts: parts, thumbnail: image))
+            }
+        }
+    }
+
+    private func loadFile(
+        _ provider: NSItemProvider,
+        type: UTType,
+        completion: @escaping (Data?, String, String) -> Void
+    ) {
+        let identifier = type.identifier
+        guard provider.hasItemConformingToTypeIdentifier(identifier) else {
+            completion(nil, "", "")
+            return
+        }
+        provider.loadFileRepresentation(forTypeIdentifier: identifier) { url, _ in
+            guard let url, let data = try? Data(contentsOf: url) else {
+                completion(nil, "", "")
+                return
+            }
+            let mime = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType
+                ?? type.preferredMIMEType
+                ?? "application/octet-stream"
+            completion(data, mime, url.lastPathComponent)
         }
     }
 
@@ -202,8 +316,13 @@ final class ComposerSheetViewController: UIViewController, PHPickerViewControlle
     private func post() {
         guard !isPublishing else { return }
         let content = composer.text
-        let attachments = drafts.map {
-            PendingAttachment(filename: $0.filename, content: kotlinBytes($0.data), type: $0.type)
+        let attachments = drafts.flatMap { $0.parts }.map {
+            PendingAttachment(
+                filename: $0.filename,
+                content: kotlinBytes($0.data),
+                type: $0.type,
+                motionMedia: $0.motion
+            )
         }
         let index = max(visibility.selectedSegmentIndex, 0)
         let selected = index < publishVisibilities.count ? publishVisibilities[index] : .private_

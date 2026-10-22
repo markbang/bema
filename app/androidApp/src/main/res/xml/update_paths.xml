@@ -1,7 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Paths FileProvider may hand out; just the folder the update download writes. -->
+<!-- Paths FileProvider may hand out: update downloads and shared images. -->
 <paths>
     <cache-path
         name="updates"
         path="updates/" />
+    <cache-path
+        name="shared"
+        path="shared/" />
 </paths>

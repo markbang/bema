@@ -18,6 +18,7 @@ import dev.bema.shared.data.model.Memo
 import dev.bema.shared.data.model.MemoInput
 import dev.bema.shared.data.model.MemoPatch
 import dev.bema.shared.data.model.MemoShare
+import dev.bema.shared.data.model.MotionMedia
 import dev.bema.shared.data.model.PasswordCredentials
 import dev.bema.shared.data.model.Reaction
 import dev.bema.shared.data.model.ReactionInput
@@ -25,6 +26,9 @@ import dev.bema.shared.data.model.RefreshTokenResponse
 import dev.bema.shared.data.model.SignInRequest
 import dev.bema.shared.data.model.SignInResponse
 import dev.bema.shared.data.model.UpsertReactionBody
+import dev.bema.shared.data.model.UploadAttachmentRequest
+import dev.bema.shared.data.model.UploadAttachmentResponse
+import dev.bema.shared.data.model.UploadAttachmentSpec
 import dev.bema.shared.data.model.User
 import dev.bema.shared.data.model.UserNotification
 import dev.bema.shared.data.model.UserStats
@@ -59,6 +63,7 @@ import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import io.ktor.http.takeFrom
 import io.ktor.serialization.kotlinx.json.json
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
 import kotlin.time.Clock
@@ -66,6 +71,7 @@ import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.encodeToJsonElement
@@ -87,17 +93,28 @@ class MemosApi(
     private val accessTokenExpiresAt: () -> Instant? = { null },
     private val onUnauthorized: suspend () -> Unit = {},
     private val rawHttpClient: HttpClient = createPlatformHttpClient(),
-    private val cookieStorage: CookiesStorage = AcceptAllCookiesStorage()
+    private val cookieStorage: CookiesStorage = AcceptAllCookiesStorage(),
+    initialSurface: MemosApiSurface = MemosApiSurface.V1,
+    initialVersion: MemosVersion? = null,
+    private val onCompatibilityChanged: suspend (MemosApiSurface, MemosVersion?) -> Unit = { _, _ -> }
 ) {
     private val baseUrl = normalizeInstanceUrl(instanceUrl)
     private val instanceOrigin = Url(baseUrl)
     private val settingsJson = Json { encodeDefaults = true; explicitNulls = false }
     private val refreshMutex = Mutex()
+
+    var surface: MemosApiSurface = initialSurface
+        private set
+    var version: MemosVersion? = initialVersion
+        private set
+    var capabilities: MemosApiCapabilities = MemosApiCapabilities.forVersion(version, surface)
+        private set
     private val httpClient = rawHttpClient.config {
         install(ContentNegotiation) {
             json(Json {
                 ignoreUnknownKeys = true
                 encodeDefaults = false
+                explicitNulls = false
             })
         }
         install(HttpCookies) {
@@ -126,6 +143,33 @@ class MemosApi(
     private fun isInstanceOrigin(target: Url): Boolean = target.protocol == instanceOrigin.protocol &&
         target.host.equals(instanceOrigin.host, ignoreCase = true) && target.port == instanceOrigin.port
 
+    /**
+     * Switches to [target] and recomputes the version-dependent details. The
+     * callback persists the new surface so the next launch does not have to
+     * discover it again.
+     */
+    suspend fun adopt(target: MemosApiSurface, targetVersion: MemosVersion? = version) {
+        val next = MemosApiCapabilities.forVersion(targetVersion, target)
+        val changed = next != capabilities
+        surface = next.surface
+        version = targetVersion
+        capabilities = next
+        if (changed) onCompatibilityChanged(next.surface, targetVersion)
+    }
+
+    private fun missingRoute(status: HttpStatusCode): Boolean =
+        status == HttpStatusCode.NotFound || status == HttpStatusCode.Gone || status == HttpStatusCode.MethodNotAllowed
+
+    private fun surfacesToTry(): List<MemosApiSurface> = when {
+        version != null && version >= MEMOS_26_10 -> listOf(MemosApiSurface.MODERN)
+        version != null -> listOf(MemosApiSurface.V1)
+        surface == MemosApiSurface.MODERN -> listOf(MemosApiSurface.MODERN, MemosApiSurface.V1)
+        else -> listOf(MemosApiSurface.V1, MemosApiSurface.MODERN)
+    }
+
+    private fun nextSurface(tried: Set<MemosApiSurface>): MemosApiSurface? =
+        surfacesToTry().firstOrNull { it !in tried }
+
     private suspend fun request(block: suspend (String?) -> HttpResponse): HttpResponse {
         // Refresh ahead of expiry rather than after a 401: the access token is short
         // lived, and letting it lapse turns the next tap into a visible failure.
@@ -144,18 +188,24 @@ class MemosApi(
         } else {
             current
         }
+        val attemptedSurface = surface
         val first = block(token)
-        if (first.status != HttpStatusCode.Unauthorized) {
-            return first.requireSuccess()
+        if (first.status == HttpStatusCode.Unauthorized) {
+            val refreshed = refreshMutex.withLock { refreshAccessToken() }
+            if (refreshed.isNullOrBlank()) {
+                onUnauthorized()
+                throw MemosApiException(HttpStatusCode.Unauthorized, "Session expired")
+            }
+            return block(refreshed).requireSuccess()
         }
 
-        val refreshed = refreshMutex.withLock { refreshAccessToken() }
-        if (refreshed.isNullOrBlank()) {
-            onUnauthorized()
-            throw MemosApiException(HttpStatusCode.Unauthorized, "Session expired")
+        // Memos 26.10 answers the old /api/v1 routes with 410 Gone. Flip once and
+        // retry; the block rebuilds its URL and body from the new capabilities.
+        if (first.status == HttpStatusCode.Gone && attemptedSurface == MemosApiSurface.V1) {
+            if (surface != MemosApiSurface.MODERN) adopt(MemosApiSurface.MODERN, MEMOS_26_10)
+            return block(token).requireSuccess()
         }
-
-        return block(refreshed).requireSuccess()
+        return first.requireSuccess()
     }
 
     private suspend fun HttpResponse.requireSuccess(): HttpResponse {
@@ -179,14 +229,15 @@ class MemosApi(
      * Connect-protocol path for a service method, e.g.
      * `memos.api.v1.AuthService/SignIn`.
      *
-     * Memos mounts grpc-gateway under `/api/v1` and the Connect handlers, which is
-     * where cookies are handled, under `/memos.api.v1`. The refresh cookie is both
-     * written (`Set-Cookie`) and read (the gateway never forwards `Cookie` into
-     * request metadata) only on the Connect path, so the session calls use it.
+     * Memos mounts grpc-gateway under the surface's REST path and the Connect
+     * handlers, which is where cookies are handled, under the matching package.
+     * The refresh cookie is both written (`Set-Cookie`) and read (the gateway never
+     * forwards `Cookie` into request metadata) only on the Connect path, so the
+     * session calls use it.
      */
     private fun URLBuilder.connect(service: String, method: String) {
         takeFrom(baseUrl)
-        appendPathSegments("memos.api.v1.$service", method)
+        appendPathSegments("${surface.connectPackage}.$service", method)
     }
 
     private fun HttpRequestBuilder.connectProtocol() {
@@ -196,8 +247,18 @@ class MemosApi(
     private fun URLBuilder.api(vararg path: String) {
         takeFrom(baseUrl)
         val segments = buildList {
-            add("api")
-            add("v1")
+            addAll(surface.apiPath.split('/'))
+            path.forEach { piece ->
+                addAll(piece.split('/').filter { it.isNotBlank() })
+            }
+        }
+        appendPathSegments(*segments.toTypedArray())
+    }
+
+    private fun URLBuilder.apiAt(surface: MemosApiSurface, vararg path: String) {
+        takeFrom(baseUrl)
+        val segments = buildList {
+            addAll(surface.apiPath.split('/'))
             path.forEach { piece ->
                 addAll(piece.split('/').filter { it.isNotBlank() })
             }
@@ -225,23 +286,116 @@ class MemosApi(
         setBody(value)
     }
 
-    suspend fun signIn(username: String, password: String): SignInResponse =
-        httpClient.post {
-            url { connect("AuthService", "SignIn") }
-            connectProtocol()
-            jsonBody(SignInRequest(PasswordCredentials(username, password)))
-        }.requireSuccess().body()
+    /**
+     * Tries the known Connect surfaces before giving up. 26.10 answers the old
+     * route with 410 Gone, while pre-0.26 servers have no Connect route at all.
+     */
+    suspend fun signIn(username: String, password: String): SignInResponse {
+        var last: HttpResponse? = null
+        val tried = mutableSetOf<MemosApiSurface>()
+        while (true) {
+            val candidate = nextSurface(tried) ?: break
+            tried += candidate
+            adopt(candidate, version)
+            val response = httpClient.post {
+                url { connect("AuthService", "SignIn") }
+                connectProtocol()
+                jsonBody(SignInRequest(PasswordCredentials(username, password)))
+            }
+            if (response.status.isSuccess()) {
+                try {
+                    return response.body()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // A reverse proxy can answer an unknown route with a 200 HTML
+                    // page; treat an unreadable body like a missing route.
+                    last = response
+                    continue
+                }
+            }
+            if (!missingRoute(response.status)) return response.requireSuccess().body()
+            last = response
+            // The old surface answered 410: learn the new one and retry with it.
+            if (response.status == HttpStatusCode.Gone) {
+                adopt(MemosApiSurface.MODERN, MEMOS_26_10)
+            }
+        }
+        val status = last?.status?.takeIf { !it.isSuccess() } ?: HttpStatusCode.NotFound
+        throw MemosApiException(
+            status,
+            unsupportedVersionMessage(
+                runCatching { detectInstanceProfile().version }.getOrNull()
+            )
+        )
+    }
 
-    suspend fun refresh(): RefreshTokenResponse =
-        httpClient.post {
+    suspend fun refresh(): RefreshTokenResponse {
+        val attemptedSurface = surface
+        var response = httpClient.post {
             url { connect("AuthService", "RefreshToken") }
             connectProtocol()
             jsonBody(emptyMap<String, String>())
-        }.requireSuccess().body()
+        }
+        if (response.status == HttpStatusCode.Gone && attemptedSurface == MemosApiSurface.V1) {
+            if (surface != MemosApiSurface.MODERN) adopt(MemosApiSurface.MODERN, MEMOS_26_10)
+            response = httpClient.post {
+                url { connect("AuthService", "RefreshToken") }
+                connectProtocol()
+                jsonBody(emptyMap<String, String>())
+            }
+        }
+        return response.requireSuccess().body()
+    }
 
     suspend fun currentUser(): User =
         request { token -> httpClient.get { url { api("auth", "me") }; auth(token) } }
             .body<CurrentUserResponse>().user
+
+    /**
+     * Reads the instance profile, walking the surfaces when a route is missing.
+     * Pre-0.26 instances answer at `workspace/profile` instead.
+     */
+    suspend fun detectInstanceProfile(): InstanceProfile {
+        var lastError: Exception? = null
+        val tried = mutableSetOf<MemosApiSurface>()
+        while (true) {
+            val candidate = nextSurface(tried) ?: break
+            tried += candidate
+            try {
+                val profile = httpClient.get {
+                    url { apiAt(candidate, "instance", "profile") }
+                }.requireSuccess().body<InstanceProfile>()
+                adopt(candidate, MemosVersion.parse(profile.version))
+                return profile
+            } catch (e: MemosApiException) {
+                if (!missingRoute(e.status)) throw e
+                lastError = e
+                if (e.status == HttpStatusCode.Gone) adopt(MemosApiSurface.MODERN, MEMOS_26_10)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                lastError = e
+            }
+        }
+        val knownVersion = version
+        if (knownVersion == null || knownVersion < MEMOS_26_10) {
+            try {
+                val legacy = httpClient.get {
+                    url { apiAt(MemosApiSurface.V1, "workspace", "profile") }
+                }.requireSuccess().body<WorkspaceProfileResponse>()
+                adopt(MemosApiSurface.V1, MemosVersion.parse(legacy.version))
+                return InstanceProfile(version = legacy.version)
+            } catch (e: MemosApiException) {
+                if (!missingRoute(e.status)) throw e
+                lastError = e
+            }
+        }
+        throw lastError ?: MemosApiException(HttpStatusCode.NotFound, "Instance profile unavailable")
+    }
+
+    suspend fun instanceProfile(): InstanceProfile =
+        httpClient.get { url { api("instance", "profile") } }.requireSuccess().body()
 
     /**
      * Activity statistics for one user: the tag cloud and the timestamps behind the
@@ -267,9 +421,6 @@ class MemosApi(
         }
     }
 
-    suspend fun instanceProfile(): InstanceProfile =
-        httpClient.get { url { api("instance", "profile") } }.requireSuccess().body()
-
     suspend fun generalSetting(): InstanceSetting =
         request { token ->
             httpClient.get {
@@ -294,26 +445,47 @@ class MemosApi(
             httpClient.get { url { api(setting.name) }; auth(token) }
         }.body<JsonObject>()
         val edits = settingsJson.encodeToJsonElement(setting).jsonObject
-        val body = mergeSettingFields(current, edits)
         return request { token ->
             httpClient.patch {
                 url { api(setting.name) }
                 auth(token)
-                jsonBody(body)
+                // 26.10 moved the resource behind `instanceSetting` in the PATCH body.
+                jsonBody(
+                    if (capabilities.instanceSettingUpdateIsWrapped) {
+                        JsonObject(mapOf("instanceSetting" to mergeSettingFields(current, edits)))
+                    } else {
+                        mergeSettingFields(current, edits)
+                    }
+                )
             }
         }.body()
     }
 
-    suspend fun batchGetUsers(usernames: List<String>): List<dev.bema.shared.data.model.User> {
-        if (usernames.isEmpty()) return emptyList()
+    /** [creators] are resource names (`users/{user}`), as Memos returns them. */
+    suspend fun batchGetUsers(creators: List<String>): List<User> {
+        if (creators.isEmpty()) return emptyList()
         return request { token ->
             httpClient.post {
                 url { api("users:batchGet") }
                 auth(token)
-                jsonBody(BatchGetUsersRequest(usernames.distinct().take(100)))
+                jsonBody(
+                    if (capabilities.batchUsersUseResourceNames) {
+                        BatchGetUsersRequest(names = creators.distinct().take(100))
+                    } else {
+                        BatchGetUsersRequest(usernames = creators.map { it.substringAfterLast('/') }.distinct().take(100))
+                    }
+                )
             }
         }.body<BatchGetUsersResponse>().users
     }
+
+    suspend fun getUser(name: String): User =
+        request { token ->
+            httpClient.get {
+                url { api(if (name.contains('/')) name else "users/$name") }
+                auth(token)
+            }
+        }.body()
 
     fun userAvatarUrl(username: String): String =
         URLBuilder().apply { file("users", username, "avatar") }.buildString()
@@ -349,16 +521,84 @@ class MemosApi(
         request { token -> httpClient.get { url { api(name) }; auth(token) } }.body()
 
     @OptIn(ExperimentalEncodingApi::class)
-    suspend fun createAttachment(filename: String, content: ByteArray, type: String): Attachment =
+    suspend fun createAttachment(
+        filename: String,
+        content: ByteArray,
+        type: String,
+        motionMedia: MotionMedia? = null
+    ): Attachment =
         request { token ->
             httpClient.post {
                 url { api("attachments") }
                 auth(token)
                 // `content` is a proto bytes field, which JSON carries as base64; a
                 // ByteArray would serialise to an array of numbers and be rejected.
-                jsonBody(AttachmentUpload(filename, Base64.encode(content), type))
+                jsonBody(AttachmentUpload(filename, Base64.encode(content), type, motionMedia))
             }
         }.body()
+
+    /**
+     * Uploads one attachment. 0.31+ takes bounded chunks, so a large file does
+     * not become one giant base64 request and progress can be reported.
+     */
+    @OptIn(ExperimentalEncodingApi::class)
+    suspend fun uploadAttachment(
+        filename: String,
+        content: ByteArray,
+        type: String,
+        motionMedia: MotionMedia? = null,
+        onProgress: (uploaded: Long, total: Long) -> Unit = { _, _ -> }
+    ): Attachment {
+        if (!capabilities.chunkedUploadSupported || content.size <= SMALL_ATTACHMENT_BYTES) {
+            onProgress(0, content.size.toLong())
+            return createAttachment(filename, content, type, motionMedia).also {
+                onProgress(content.size.toLong(), content.size.toLong())
+            }
+        }
+
+        var uploadId: String? = null
+        var committed = 0L
+        var chunkSize = UPLOAD_CHUNK_BYTES
+        onProgress(0, content.size.toLong())
+        while (committed < content.size) {
+            val end = minOf(committed + chunkSize, content.size.toLong())
+            val finish = end == content.size.toLong()
+            val payload = UploadAttachmentRequest(
+                spec = if (uploadId == null) {
+                    UploadAttachmentSpec(
+                        attachment = Attachment(filename = filename, type = type, motionMedia = motionMedia),
+                        totalSize = content.size.toLong()
+                    )
+                } else {
+                    null
+                },
+                uploadId = uploadId,
+                writeOffset = committed,
+                data = Base64.encode(content.copyOfRange(committed.toInt(), end.toInt())),
+                finishWrite = finish
+            )
+            val response = request { token ->
+                httpClient.post {
+                    url { api("attachments:upload") }
+                    auth(token)
+                    jsonBody(payload)
+                }
+            }.body<UploadAttachmentResponse>()
+            uploadId = response.uploadId.ifBlank { uploadId }
+            val previous = committed
+            committed = response.committedSize
+            if (committed <= previous) {
+                throw MemosApiException(
+                    HttpStatusCode.InternalServerError,
+                    if (finish) "Upload did not produce an attachment" else "Upload made no progress"
+                )
+            }
+            if (response.maxChunkSize > 0) chunkSize = minOf(response.maxChunkSize, UPLOAD_CHUNK_BYTES)
+            onProgress(committed, content.size.toLong())
+            response.attachment?.let { return it }
+        }
+        throw MemosApiException(HttpStatusCode.InternalServerError, "Upload did not produce an attachment")
+    }
 
     suspend fun createMemo(
         content: String,
@@ -444,7 +684,14 @@ class MemosApi(
             httpClient.post {
                 url { api(name, "reactions") }
                 auth(token)
-                jsonBody(UpsertReactionBody(reaction = ReactionInput(contentId = name, reactionType = reactionType)))
+                jsonBody(
+                    UpsertReactionBody(
+                        reaction = ReactionInput(
+                            contentId = name.takeIf { capabilities.reactionIncludesContentId },
+                            reactionType = reactionType
+                        )
+                    )
+                )
             }
         }.body()
 
@@ -518,7 +765,7 @@ class MemosApi(
         }
     }
 
-    suspend fun getAttachmentBytes(attachment: Attachment, thumbnail: Boolean = false): ByteArray {
+    suspend fun getAttachmentBytes(attachment: Attachment, thumbnail: Boolean = false, motion: Boolean = false): ByteArray {
         if (attachment.externalLink.isNotBlank()) {
             return rawHttpClient.get(attachment.externalLink).requireSuccess().bodyAsBytes()
         }
@@ -527,6 +774,7 @@ class MemosApi(
                 url {
                     file("attachments", attachment.uid, attachment.filename)
                     if (thumbnail) parameters.append("thumbnail", "true")
+                    if (motion) parameters.append("motion", "true")
                 }
                 auth(token)
             }
@@ -556,6 +804,15 @@ private fun mergeSettingFields(current: JsonObject, edits: JsonObject): JsonObje
         }
     }
 )
+
+@Serializable
+private data class WorkspaceProfileResponse(
+    val version: String = ""
+)
+
+/** Files below this size fit in one request without a noticeable pause. */
+private const val SMALL_ATTACHMENT_BYTES = 256 * 1024
+private const val UPLOAD_CHUNK_BYTES = 512 * 1024
 
 fun normalizeInstanceUrl(value: String): String {
     val trimmed = value.trim().trimEnd('/')

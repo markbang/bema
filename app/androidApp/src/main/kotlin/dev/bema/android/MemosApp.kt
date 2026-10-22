@@ -4,15 +4,21 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
+import android.widget.VideoView
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
@@ -23,6 +29,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -105,6 +115,7 @@ import top.yukonga.miuix.kmp.theme.lightColorScheme
 import top.yukonga.miuix.kmp.window.WindowBottomSheet
 import top.yukonga.miuix.kmp.window.WindowDialog
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -134,13 +145,17 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.core.content.FileProvider
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -154,6 +169,9 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import coil3.compose.AsyncImage
 import dev.bema.shared.data.model.CustomProfile
 import dev.bema.shared.data.model.GeneralSetting
@@ -173,6 +191,7 @@ import dev.bema.shared.data.session.uploadSizeOptionsFor
 import dev.bema.shared.data.session.HEART_REACTION
 import dev.bema.shared.data.session.MemosAccount
 import dev.bema.shared.data.session.PendingAttachment
+import dev.bema.shared.data.session.UploadProgress
 import dev.bema.shared.data.session.MemosAppState
 import dev.bema.shared.data.session.ActivityStats
 import dev.bema.shared.data.session.CalendarDays
@@ -188,6 +207,7 @@ import java.io.File
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlin.math.min
@@ -795,7 +815,10 @@ private fun TimelineScreen(
     }
     val latestState by rememberUpdatedState(state)
     LaunchedEffect(Unit) {
-        if (state.timeline.isEmpty()) controller.refreshTimeline() else controller.revalidateTimeline()
+        when {
+            state.timeline.isNotEmpty() -> controller.revalidateTimeline()
+            !state.isLoading -> controller.refreshTimeline()
+        }
     }
     LaunchedEffect(controller, listState) {
         snapshotFlow {
@@ -1006,6 +1029,7 @@ private fun MemoTweet(
 ) {
     val context = LocalContext.current
     val name = user?.visibleName ?: memo.creator.substringAfterLast('/').ifBlank { "Memos" }
+    var liveAttachment by remember(memo.name) { mutableStateOf<Attachment?>(null) }
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp)) {
         Row(verticalAlignment = Alignment.Top) {
             UserAvatar(user, name, Modifier.size(46.dp), controller)
@@ -1023,7 +1047,9 @@ private fun MemoTweet(
                     MarkdownText(memo.content)
                     if (memo.tags.isNotEmpty()) Text(memo.tags.joinToString("  ") { "#$it" }, color = Accent, modifier = Modifier.padding(top = 8.dp))
                 }
-                if (memo.attachments.isNotEmpty()) MediaRail(memo, controller, onOpenImage)
+                if (memo.attachments.isNotEmpty()) {
+                    MediaRail(memo, controller, onOpenImage, onPlayLive = { liveAttachment = it })
+                }
                 TweetActions(
                     memo,
                     liked,
@@ -1036,6 +1062,9 @@ private fun MemoTweet(
         }
     }
     MiuixHorizontalDivider(color = InkLine, thickness = 1.dp)
+    liveAttachment?.let { attachment ->
+        LivePhotoPlayerDialog(memo, attachment, controller) { liveAttachment = null }
+    }
 }
 
 @Composable
@@ -1150,24 +1179,210 @@ private fun markdownInline(input: String, accent: Color, codeBackground: Color):
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MediaRail(memo: Memo, controller: MemosUiController, onOpenImage: (Int) -> Unit) {
+private fun MediaRail(
+    memo: Memo,
+    controller: MemosUiController,
+    onOpenImage: (Int) -> Unit,
+    onPlayLive: (Attachment) -> Unit
+) {
+    val haptics = LocalHapticFeedback.current
+    val configuration = LocalConfiguration.current
+    val scope = rememberCoroutineScope()
+    var peek by remember(memo.name) { mutableStateOf<PeekTarget?>(null) }
     val images = memo.attachments.filter { it.isImage }
     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 12.dp)) {
         items(images.size) { index ->
             val attachment = images[index]
-            val bytes by produceState<ByteArray?>(null, attachment.name) { value = controller.attachmentBytes(attachment, thumbnail = true) }
-            AsyncImage(
-                model = bytes,
-                contentDescription = attachment.filename,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
+            val bytes by produceState<ByteArray?>(null, attachment.name) {
+                value = controller.attachmentBytes(attachment, thumbnail = true)
+            }
+            val live = memo.motionTargetFor(attachment) != null
+            val data = bytes
+            Box(
+                Modifier
                     .size(width = 260.dp, height = 210.dp)
                     .clip(RoundedCornerShape(16.dp))
                     .background(InkElevated)
-                    .clickable { onOpenImage(index) }
-            )
+                    .semantics {
+                        contentDescription = attachment.filename
+                        onClick(label = "Open image") {
+                            onOpenImage(index)
+                            true
+                        }
+                    }
+                    .peekable(
+                        key = data,
+                        onTap = { onOpenImage(index) },
+                        onPeekStart = {
+                            if (data != null) {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                peek = PeekTarget(attachment, data)
+                                scope.launch {
+                                    val full = controller.attachmentBytes(attachment, thumbnail = false)
+                                    if (full != null && peek?.attachment?.name == attachment.name) {
+                                        peek = PeekTarget(attachment, full)
+                                    }
+                                }
+                            }
+                        },
+                        onPeekEnd = { peek = null }
+                    )
+            ) {
+                Crossfade(targetState = bytes, label = "media") { loaded ->
+                    if (loaded == null) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            InfiniteProgressIndicator(color = Accent, size = 24.dp)
+                        }
+                    } else {
+                        AsyncImage(
+                            model = loaded,
+                            contentDescription = attachment.filename,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                }
+                if (live) {
+                    Row(
+                        Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(8.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color.Black.copy(alpha = 0.55f))
+                            .combinedClickable(
+                                onClick = { onPlayLive(attachment) },
+                                onLongClick = {}
+                            )
+                            .padding(horizontal = 8.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text("▶", color = Color.White, style = MiuixTheme.textStyles.footnote2)
+                        Text("LIVE", color = Color.White, style = MiuixTheme.textStyles.footnote2, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
         }
+    }
+
+    peek?.let { target ->
+        Popup(
+            alignment = Alignment.Center,
+            properties = PopupProperties(
+                focusable = false,
+                dismissOnBackPress = false,
+                dismissOnClickOutside = false
+            )
+        ) {
+            Box(
+                Modifier
+                    .size(configuration.screenWidthDp.dp, configuration.screenHeightDp.dp)
+                    .background(Color.Black.copy(alpha = 0.6f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxWidth(0.92f)
+                        .aspectRatio(0.75f)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(Color.Black)
+                ) {
+                    AsyncImage(
+                        model = target.bytes,
+                        contentDescription = target.attachment.filename,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    Text(
+                        "Release to close",
+                        color = Color.White.copy(alpha = 0.8f),
+                        style = MiuixTheme.textStyles.footnote1,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(14.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color.Black.copy(alpha = 0.5f))
+                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+private data class PeekTarget(val attachment: Attachment, val bytes: ByteArray)
+
+
+@Composable
+private fun LivePhotoPlayerDialog(
+    memo: Memo,
+    attachment: Attachment,
+    controller: MemosUiController,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    var bytes by remember(attachment.name) { mutableStateOf<ByteArray?>(null) }
+    var failed by remember(attachment.name) { mutableStateOf(false) }
+    var videoFile by remember(attachment.name) { mutableStateOf<File?>(null) }
+    LaunchedEffect(attachment.name) {
+        val data = controller.motionBytes(memo, attachment)
+        failed = data == null
+        bytes = data
+    }
+    LaunchedEffect(bytes) {
+        bytes?.let { data ->
+            val file = runCatching {
+                File(File(context.cacheDir, "motion").apply { mkdirs() }, "${attachment.uid}.mp4")
+                    .apply { writeBytes(data) }
+            }.getOrNull()
+            videoFile = file
+            failed = file == null
+        }
+    }
+    WindowDialog(
+        show = true,
+        title = if (attachment.motionMedia?.hasEmbeddedVideo == true) "Motion photo" else "Live Photo",
+        backgroundColor = Color.Black,
+        onDismissRequest = onDismiss
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .aspectRatio(0.75f)
+                .clip(RoundedCornerShape(18.dp))
+                .background(Color.Black),
+            contentAlignment = Alignment.Center
+        ) {
+            when {
+                failed -> Text("Motion video unavailable", color = Color.White)
+                bytes == null || videoFile == null -> InfiniteProgressIndicator(color = Accent, size = 32.dp)
+                else -> MotionVideoPlayer(videoFile!!)
+            }
+        }
+    }
+}
+
+@Composable
+private fun MotionVideoPlayer(file: File) {
+    val view = remember { mutableStateOf<VideoView?>(null) }
+    AndroidView(
+        factory = { context ->
+            VideoView(context).apply {
+                setVideoPath(file.absolutePath)
+                setOnPreparedListener { player ->
+                    player.isLooping = true
+                    player.setVolume(0f, 0f)
+                    start()
+                }
+                view.value = this
+            }
+        },
+        modifier = Modifier.fillMaxSize()
+    )
+    DisposableEffect(file) {
+        onDispose { view.value?.stopPlayback() }
     }
 }
 
@@ -1312,6 +1527,8 @@ private fun ComposerDialog(state: MemosAppState, controller: MemosUiController, 
                     }
                 }
 
+                state.uploadProgress?.let { UploadProgressBar(it) }
+
                 Row(
                     modifier = Modifier.clickable(enabled = !state.isPublishing) { picker.launch("*/*") }.padding(vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -1348,6 +1565,42 @@ private fun ComposerDialog(state: MemosAppState, controller: MemosUiController, 
                     colors = ButtonDefaults.textButtonColorsPrimary()
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun UploadProgressBar(progress: UploadProgress) {
+    val fraction by animateFloatAsState(progress.fraction, tween(180), label = "upload")
+    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "Uploading ${progress.filename}",
+                color = TextSecondary,
+                style = MiuixTheme.textStyles.footnote1,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            if (progress.uploadedBytes <= 0) {
+                InfiniteProgressIndicator(color = Accent, size = 14.dp)
+            } else {
+                Text("${(fraction * 100).toInt()}%", color = TextSecondary, style = MiuixTheme.textStyles.footnote1)
+            }
+        }
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(4.dp)
+                .clip(CircleShape)
+                .background(InkLine)
+        ) {
+            Box(
+                Modifier
+                    .fillMaxWidth(fraction.coerceAtLeast(if (progress.uploadedBytes <= 0) 0.08f else 0f))
+                    .fillMaxHeight()
+                    .background(Accent)
+            )
         }
     }
 }
@@ -2454,8 +2707,16 @@ private fun ImageViewer(
 ) {
     val images = target.memo.attachments.filter { it.isImage }
     if (images.isEmpty()) return
+    val context = LocalContext.current
     val start = target.startIndex.coerceIn(0, images.lastIndex)
     val pagerState = rememberPagerState(initialPage = start, pageCount = { images.size })
+    var actions by remember { mutableStateOf<ImageActionTarget?>(null) }
+    var saveTarget by remember { mutableStateOf<ImageActionTarget?>(null) }
+    val saveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/*")) { uri ->
+        val pending = saveTarget
+        saveTarget = null
+        if (uri != null && pending != null) saveImageTo(context, uri, pending)
+    }
     Box(
         Modifier
             .fillMaxSize()
@@ -2471,14 +2732,17 @@ private fun ImageViewer(
             val bytes by produceState<ByteArray?>(null, attachment.name) {
                 value = controller.attachmentBytes(attachment, thumbnail = false)
             }
+            val data = bytes
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                if (bytes == null) InfiniteProgressIndicator(color = Accent, size = 28.dp)
-                else AsyncImage(
-                    model = bytes,
-                    contentDescription = attachment.filename,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.fillMaxSize()
-                )
+                if (data == null) {
+                    InfiniteProgressIndicator(color = Accent, size = 28.dp)
+                } else {
+                    ZoomableImage(
+                        bytes = data,
+                        description = attachment.filename,
+                        onLongPress = { actions = ImageActionTarget(attachment, data) }
+                    )
+                }
             }
         }
         MiuixIconButton(
@@ -2501,5 +2765,189 @@ private fun ImageViewer(
                     .padding(top = 16.dp)
             )
         }
+        actions?.let { pending ->
+            ImageActionsDialog(
+                onSave = {
+                    saveTarget = pending
+                    actions = null
+                    saveLauncher.launch(pending.attachment.filename.substringAfterLast('/').ifBlank { "image.jpg" })
+                },
+                onCopy = {
+                    copyImage(context, pending)
+                    actions = null
+                },
+                onShare = {
+                    shareImage(context, pending)
+                    actions = null
+                },
+                onCopyLink = {
+                    copyMemoLink(context, controller.memoUrl(target.memo))
+                    actions = null
+                },
+                onDismiss = { actions = null }
+            )
+        }
     }
+}
+
+private data class ImageActionTarget(val attachment: Attachment, val bytes: ByteArray)
+
+@Composable
+private fun ImageActionsDialog(
+    onSave: () -> Unit,
+    onCopy: () -> Unit,
+    onShare: () -> Unit,
+    onCopyLink: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    WindowDialog(
+        show = true,
+        title = "Image",
+        backgroundColor = InkElevated,
+        onDismissRequest = onDismiss
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            MiuixTextButton(text = "Save image", onClick = onSave, modifier = Modifier.fillMaxWidth())
+            MiuixTextButton(text = "Copy image", onClick = onCopy, modifier = Modifier.fillMaxWidth())
+            MiuixTextButton(text = "Share image", onClick = onShare, modifier = Modifier.fillMaxWidth())
+            MiuixTextButton(text = "Copy memo link", onClick = onCopyLink, modifier = Modifier.fillMaxWidth())
+            MiuixTextButton(text = "Cancel", onClick = onDismiss, modifier = Modifier.fillMaxWidth())
+        }
+    }
+}
+
+@Composable
+private fun ZoomableImage(bytes: ByteArray, description: String, onLongPress: () -> Unit) {
+    var scale by remember(bytes) { mutableFloatStateOf(1f) }
+    var offset by remember(bytes) { mutableStateOf(Offset.Zero) }
+    Box(
+        Modifier
+            .fillMaxSize()
+            .zoomable(
+                scale = { scale },
+                onZoom = { zoom, _ ->
+                    scale = (scale * zoom).coerceIn(1f, 5f)
+                    if (scale <= 1f) offset = Offset.Zero
+                },
+                onPan = { pan -> if (scale > 1f) offset += pan }
+            )
+            .pointerInput(bytes) {
+                detectTapGestures(
+                    onDoubleTap = {
+                        scale = if (scale > 1f) 1f else 2.5f
+                        offset = Offset.Zero
+                    },
+                    onLongPress = { onLongPress() }
+                )
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        AsyncImage(
+            model = bytes,
+            contentDescription = description,
+            contentScale = ContentScale.Fit,
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                    translationX = offset.x
+                    translationY = offset.y
+                }
+        )
+    }
+}
+
+private fun Modifier.peekable(
+    key: Any?,
+    onTap: () -> Unit,
+    onPeekStart: () -> Unit,
+    onPeekEnd: () -> Unit
+): Modifier = pointerInput(key) {
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        val start = down.position
+        var peeking = false
+        try {
+            while (true) {
+                val event = if (peeking) {
+                    awaitPointerEvent()
+                } else {
+                    withTimeoutOrNull(450L) { awaitPointerEvent() }
+                }
+                if (event == null) {
+                    peeking = true
+                    onPeekStart()
+                    continue
+                }
+                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                if (peeking) event.changes.forEach { it.consume() }
+                if (!change.pressed) {
+                    if (!peeking) onTap()
+                    break
+                }
+                if (!peeking && (change.position - start).getDistance() > viewConfiguration.touchSlop) {
+                    break
+                }
+            }
+        } finally {
+            if (peeking) onPeekEnd()
+        }
+    }
+}
+
+private fun Modifier.zoomable(
+    scale: () -> Float,
+    onZoom: (Float, Offset) -> Unit,
+    onPan: (Offset) -> Unit
+): Modifier = pointerInput(Unit) {
+    awaitEachGesture {
+        while (true) {
+            val event = awaitPointerEvent()
+            val zoomChange = event.calculateZoom()
+            val panChange = event.calculatePan()
+            val zooming = event.changes.count { it.pressed } > 1
+            val panning = scale() > 1f && panChange != Offset.Zero
+            if (zooming || panning) {
+                event.changes.forEach { it.consume() }
+                if (zoomChange != 1f) onZoom(zoomChange, panChange)
+                if (panning) onPan(panChange)
+            }
+            if (event.changes.none { it.pressed }) break
+        }
+    }
+}
+
+private fun sharedImageUri(context: Context, attachment: Attachment, bytes: ByteArray): Uri? = runCatching {
+    val directory = File(context.cacheDir, "shared").apply { mkdirs() }
+    val name = attachment.filename.substringAfterLast('/').ifBlank { "image" }
+    val file = File(directory, "${attachment.uid}-$name")
+    file.writeBytes(bytes)
+    FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+}.getOrNull()
+
+private fun copyImage(context: Context, target: ImageActionTarget) {
+    val uri = sharedImageUri(context, target.attachment, target.bytes) ?: return
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    clipboard.setPrimaryClip(
+        ClipData.newUri(context.contentResolver, target.attachment.filename.ifBlank { "image" }, uri)
+    )
+    Toast.makeText(context, "Image copied", Toast.LENGTH_SHORT).show()
+}
+
+private fun shareImage(context: Context, target: ImageActionTarget) {
+    val uri = sharedImageUri(context, target.attachment, target.bytes) ?: return
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = target.attachment.type.ifBlank { "image/*" }
+        putExtra(Intent.EXTRA_STREAM, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(Intent.createChooser(intent, null))
+}
+
+private fun saveImageTo(context: Context, uri: Uri, target: ImageActionTarget) {
+    val saved = runCatching {
+        context.contentResolver.openOutputStream(uri)?.use { it.write(target.bytes) } != null
+    }.getOrDefault(false)
+    Toast.makeText(context, if (saved) "Image saved" else "Couldn't save image", Toast.LENGTH_SHORT).show()
 }

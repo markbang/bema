@@ -9,11 +9,16 @@ struct MemoActions {
     var reply: (() -> Void)?
     var react: (() -> Void)?
     var openImage: ((Int) -> Void)?
+    var openLive: ((Attachment) -> Void)? = nil
 }
 
 /// One image in the media rail: cropped to fill, rounded, and tappable.
-final class MediaPageView: UIControl {
+final class MediaPageView: UIControl, UIContextMenuInteractionDelegate {
     private let imageView = UIImageView()
+    private let spinner = UIActivityIndicatorView(style: .medium)
+    private let liveBadge = UILabel()
+    private let playButton = UIButton(type: .system)
+    var onPlay: (() -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -23,14 +28,52 @@ final class MediaPageView: UIControl {
         imageView.contentMode = .scaleAspectFill
         imageView.clipsToBounds = true
         imageView.isUserInteractionEnabled = false
+        imageView.alpha = 0
         imageView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(imageView)
+
+        spinner.color = Palette.accent
+        spinner.startAnimating()
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(spinner)
+
+        liveBadge.text = "LIVE"
+        liveBadge.font = TextStyle.footnote2.weight(.semibold)
+        liveBadge.textColor = .white
+        liveBadge.backgroundColor = UIColor.black.withAlphaComponent(0.55)
+        liveBadge.textAlignment = .center
+        liveBadge.layer.cornerRadius = 9
+        liveBadge.clipsToBounds = true
+        liveBadge.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(liveBadge)
+
+        var configuration = UIButton.Configuration.filled()
+        configuration.image = UIImage(systemName: "play.fill")
+        configuration.baseBackgroundColor = UIColor.black.withAlphaComponent(0.55)
+        configuration.baseForegroundColor = .white
+        configuration.cornerStyle = .capsule
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 6, bottom: 6, trailing: 6)
+        playButton.configuration = configuration
+        playButton.translatesAutoresizingMaskIntoConstraints = false
+        playButton.addAction(UIAction { [weak self] _ in self?.onPlay?() }, for: .touchUpInside)
+        addSubview(playButton)
+
         NSLayoutConstraint.activate([
             imageView.topAnchor.constraint(equalTo: topAnchor),
             imageView.leadingAnchor.constraint(equalTo: leadingAnchor),
             imageView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            imageView.bottomAnchor.constraint(equalTo: bottomAnchor)
+            imageView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            spinner.centerXAnchor.constraint(equalTo: centerXAnchor),
+            spinner.centerYAnchor.constraint(equalTo: centerYAnchor),
+            liveBadge.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            liveBadge.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+            liveBadge.widthAnchor.constraint(equalToConstant: 42),
+            liveBadge.heightAnchor.constraint(equalToConstant: 18),
+            playButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            playButton.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8)
         ])
+        setLive(false)
+        addInteraction(UIContextMenuInteraction(delegate: self))
     }
 
     convenience init() {
@@ -40,7 +83,98 @@ final class MediaPageView: UIControl {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     func setImage(_ image: UIImage?) {
-        imageView.image = image
+        spinner.stopAnimating()
+        guard let image else { return }
+        UIView.transition(with: imageView, duration: 0.2, options: .transitionCrossDissolve) {
+            self.imageView.image = image
+            self.imageView.alpha = 1
+        }
+    }
+
+    func setLive(_ live: Bool) {
+        liveBadge.isHidden = !live
+        playButton.isHidden = !live
+    }
+
+    func contextMenuInteraction(
+        _ interaction: UIContextMenuInteraction,
+        configurationForMenuAtLocation location: CGPoint
+    ) -> UIContextMenuConfiguration? {
+        guard let image = imageView.image else { return nil }
+        return UIContextMenuConfiguration(
+            identifier: nil,
+            previewProvider: {
+                let preview = UIViewController()
+                preview.view.backgroundColor = .black
+                let previewImage = UIImageView(image: image)
+                previewImage.contentMode = .scaleAspectFit
+                previewImage.translatesAutoresizingMaskIntoConstraints = false
+                preview.view.addSubview(previewImage)
+                NSLayoutConstraint.activate([
+                    previewImage.topAnchor.constraint(equalTo: preview.view.topAnchor),
+                    previewImage.leadingAnchor.constraint(equalTo: preview.view.leadingAnchor),
+                    previewImage.trailingAnchor.constraint(equalTo: preview.view.trailingAnchor),
+                    previewImage.bottomAnchor.constraint(equalTo: preview.view.bottomAnchor)
+                ])
+                let maxSize = CGSize(width: 340, height: 460)
+                let scale = min(
+                    min(maxSize.width / max(image.size.width, 1), maxSize.height / max(image.size.height, 1)),
+                    1
+                )
+                preview.preferredContentSize = CGSize(
+                    width: image.size.width * scale,
+                    height: image.size.height * scale
+                )
+                return preview
+            },
+            actionProvider: { [weak self] _ in
+                UIMenu(children: [
+                    UIAction(title: "Save to Photos", image: UIImage(systemName: "square.and.arrow.down")) { _ in
+                        self?.saveImage()
+                    },
+                    UIAction(title: "Copy", image: UIImage(systemName: "doc.on.doc")) { _ in
+                        self?.copyImage()
+                    },
+                    UIAction(title: "Share", image: UIImage(systemName: "square.and.arrow.up")) { _ in
+                        self?.shareImage()
+                    }
+                ])
+            }
+        )
+    }
+
+    private func saveImage() {
+        guard let image = imageView.image else { return }
+        UIImageWriteToSavedPhotosAlbum(
+            image,
+            self,
+            #selector(image(_:didFinishSavingWithError:contextInfo:)),
+            nil
+        )
+    }
+
+    @objc private func image(
+        _ image: UIImage,
+        didFinishSavingWithError error: Error?,
+        contextInfo: UnsafeMutableRawPointer?
+    ) {
+        DispatchQueue.main.async {
+            showToast(error == nil ? "Saved to Photos" : "Couldn't save image")
+        }
+    }
+
+    private func copyImage() {
+        guard let image = imageView.image else { return }
+        UIPasteboard.general.image = image
+        showToast("Image copied")
+    }
+
+    private func shareImage() {
+        guard let image = imageView.image, let presenter = parentViewController else { return }
+        let share = UIActivityViewController(activityItems: [image], applicationActivities: nil)
+        share.popoverPresentationController?.sourceView = self
+        share.popoverPresentationController?.sourceRect = bounds
+        presenter.present(share, animated: true)
     }
 }
 
@@ -207,6 +341,8 @@ final class MemoTweetCell: UITableViewCell {
             page.translatesAutoresizingMaskIntoConstraints = false
             page.tag = index
             page.addTarget(self, action: #selector(imageTapped(_:)), for: .touchUpInside)
+            page.setLive(memo.motionTargetFor(attachment: attachment) != nil)
+            page.onPlay = { [weak self] in self?.actions.openLive?(attachment) }
             NSLayoutConstraint.activate([
                 page.widthAnchor.constraint(equalToConstant: Metrics.mediaWidth),
                 page.heightAnchor.constraint(equalToConstant: Metrics.mediaHeight)

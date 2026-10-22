@@ -4,11 +4,15 @@ import dev.bema.shared.data.model.Attachment
 import dev.bema.shared.data.model.GeneralSetting
 import dev.bema.shared.data.model.InstanceSetting
 import dev.bema.shared.data.model.Memo
+import dev.bema.shared.data.model.MotionMedia
+import dev.bema.shared.data.model.MotionMediaRole
 import dev.bema.shared.data.model.Reaction
 import dev.bema.shared.data.model.User
 import dev.bema.shared.data.model.Visibility
 import dev.bema.shared.data.model.StorageSetting
 import dev.bema.shared.data.network.MemosApi
+import dev.bema.shared.data.network.MemosApiSurface
+import dev.bema.shared.data.network.MemosVersion
 import dev.bema.shared.data.network.PersistentCookieStorage
 import dev.bema.shared.data.network.normalizeInstanceUrl
 import dev.bema.shared.data.storage.KeyValueStore
@@ -22,9 +26,13 @@ import dev.bema.shared.data.session.localDayFilter
 import dev.bema.shared.deviceUtcOffsetSeconds
 import dev.bema.shared.data.update.deviceAbi
 import dev.bema.shared.data.update.installedVersionName
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.coroutines.cancellation.CancellationException
@@ -40,8 +48,18 @@ import kotlin.io.encoding.ExperimentalEncodingApi
 data class PendingAttachment(
     val filename: String,
     val content: ByteArray,
-    val type: String
+    val type: String,
+    val motionMedia: MotionMedia? = null
 )
+
+data class UploadProgress(
+    val filename: String,
+    val uploadedBytes: Long,
+    val totalBytes: Long
+) {
+    val fraction: Float
+        get() = if (totalBytes <= 0) 0f else (uploadedBytes.toFloat() / totalBytes).coerceIn(0f, 1f)
+}
 
 @Serializable
 data class MemosAccount(
@@ -56,6 +74,8 @@ data class MemosAccount(
     // The instance's reported version, so the client can say which Memos it talks
     // to. Blank until fetched.
     val instanceVersion: String = "",
+    // Which URL shape the instance answers on; persisted after auto-detection.
+    val apiSurface: MemosApiSurface = MemosApiSurface.V1,
     // Pinned accounts sort to the top of the account switcher.
     val pinned: Boolean = false,
     val lastSignedInAt: Instant? = null
@@ -81,6 +101,8 @@ data class MemosAppState(
     val availableUpdate: AvailableUpdate? = null,
     // Progress of an in-app update download, cleared when it finishes.
     val updateDownload: UpdateDownload? = null,
+    // Progress of the attachment currently being uploaded, if any.
+    val uploadProgress: UploadProgress? = null,
     // Tag cloud and heatmap data for the activity panel; null until fetched.
     val activity: ActivityStats? = null,
     // Set while the timeline is narrowed to one day from the activity panel.
@@ -156,6 +178,9 @@ interface MemosUiController {
     suspend fun accountAvatarBytes(account: MemosAccount): ByteArray?
     @Throws(Exception::class)
     suspend fun attachmentBytes(attachment: Attachment, thumbnail: Boolean = false): ByteArray?
+    /** The motion clip for an Android motion photo or the video half of a Live Photo. */
+    @Throws(Exception::class)
+    suspend fun motionBytes(memo: Memo, attachment: Attachment): ByteArray?
 
     // Deliberately not annotated @Throws: everything except cancellation is
     // swallowed, because an unreachable update host must not surface as an app error.
@@ -211,7 +236,7 @@ class MemosTimelineController(
     private var detailGeneration = 0L
     private var revalidatingGeneration: Long? = null
 
-    private fun activateAccount(accountId: String) {
+    private fun activateAccount(accountId: String, loading: Boolean = false) {
         accountGeneration++
         timelineGeneration++
         detailGeneration++
@@ -227,7 +252,8 @@ class MemosTimelineController(
                 activity = null,
                 timelineFilter = null,
                 hasNewerMemos = false,
-                isLoading = false,
+                uploadProgress = null,
+                isLoading = loading,
                 isLoadingMore = false,
                 isPublishing = false,
                 error = null
@@ -248,14 +274,12 @@ class MemosTimelineController(
             val draft = MemosAccount(id = accountId, instanceUrl = normalized, username = username.trim())
             val session = sessions.getOrPut(accountId) { AccountSession(draft) }
             val response = session.signIn(username.trim(), password)
-            val branding = session.loadBranding()
             val account = draft.copy(
                 userName = response.user.name,
                 displayName = response.user.visibleName,
                 avatarUrl = response.user.avatarUrl,
-                siteTitle = branding.first,
-                siteLogoUrl = branding.second,
-                instanceVersion = session.loadInstanceVersion(),
+                instanceVersion = session.api.version?.display.orEmpty(),
+                apiSurface = session.api.surface,
                 lastSignedInAt = Clock.System.now()
             )
             if (generation != accountGeneration) return
@@ -265,9 +289,16 @@ class MemosTimelineController(
                     accounts = (current.accounts.filterNot { it.id == account.id } + account).sortedBy { it.instanceUrl + it.username }
                 )
             }
-            activateAccount(account.id)
+            // Show the timeline as soon as the user is signed in. Branding and
+            // the version probe can land later without blocking the first paint.
+            activateAccount(account.id, loading = true)
             generation = accountGeneration
-            refreshTimeline("")
+            coroutineScope {
+                val branding = async { session.loadBranding() }
+                launch { refreshTimeline("") }
+                val (title, logo) = branding.await()
+                updateAccount(account.id) { it.copy(siteTitle = title, siteLogoUrl = logo) }
+            }
         } catch (e: CancellationException) {
             // Cancellation is not a sign-in failure; reporting it as one turned a
             // Compose scope teardown into a visible "…left the composition" error.
@@ -284,7 +315,7 @@ class MemosTimelineController(
     override suspend fun selectAccount(accountId: String) {
         if (_state.value.activeAccountId == accountId) return
         require(_state.value.accounts.any { it.id == accountId }) { "Unknown account" }
-        activateAccount(accountId)
+        activateAccount(accountId, loading = true)
         refreshTimeline("")
     }
 
@@ -315,7 +346,8 @@ class MemosTimelineController(
             current.copy(accounts = current.accounts.filterNot { it.id == accountId })
         }
         if (wasActive) {
-            activateAccount(_state.value.accounts.firstOrNull()?.id.orEmpty())
+            val next = _state.value.accounts.firstOrNull()
+            activateAccount(next?.id.orEmpty(), loading = next != null)
             refreshTimeline("")
         } else {
             persistAccounts()
@@ -323,7 +355,11 @@ class MemosTimelineController(
     }
 
     override suspend fun refreshTimeline(filter: String) {
-        val session = activeSessionOrNull() ?: return
+        val session = activeSessionOrNull()
+        if (session == null) {
+            setBusy(isLoading = false)
+            return
+        }
         val accountId = _state.value.activeAccountId
         val generation = ++timelineGeneration
         val effective = filter.ifBlank { _state.value.timelineFilter?.cel.orEmpty() }
@@ -331,18 +367,22 @@ class MemosTimelineController(
         _state.update { it.copy(isLoading = true, isLoadingMore = false, error = null) }
         try {
             val response = session.api.listMemos(filter = effective)
-            val profiles = session.loadUsers(response.memos)
             if (generation != timelineGeneration) return
+            // Paint the list before resolving authors: the batch request is a
+            // second round trip, and avatars/names can arrive after first paint.
             _state.update { current ->
                 current.copy(
                     timeline = response.memos,
                     nextPageToken = response.nextPageToken,
-                    userProfiles = current.userProfiles + profiles,
                     hasNewerMemos = false,
                     error = null
                 )
             }
             if (effective.isBlank()) persistTimeline(accountId, response.memos, response.nextPageToken)
+            session.ensureVersion()
+            val profiles = session.loadUsers(response.memos, _state.value.userProfiles)
+            if (generation != timelineGeneration) return
+            _state.update { it.copy(userProfiles = it.userProfiles + profiles) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -375,21 +415,27 @@ class MemosTimelineController(
         revalidatingGeneration = generation
         try {
             val response = session.api.listMemos(filter = filter)
-            val profiles = session.loadUsers(response.memos)
             if (generation != timelineGeneration) return
+            var changed = false
             _state.update { current ->
                 val hasNewer = current.timeline.isNotEmpty() &&
                     response.memos.firstOrNull()?.name != current.timeline.first().name
+                changed = !hasNewer
                 current.copy(
                     timeline = if (hasNewer) current.timeline else response.memos,
                     nextPageToken = if (hasNewer) current.nextPageToken else response.nextPageToken,
-                    userProfiles = current.userProfiles + profiles,
                     hasNewerMemos = hasNewer,
                     error = null
                 )
             }
-            if (filter.isBlank() && !_state.value.hasNewerMemos) {
+            if (filter.isBlank() && changed) {
                 persistTimeline(accountId, _state.value.timeline, _state.value.nextPageToken)
+            }
+            if (changed) {
+                session.ensureVersion()
+                val profiles = session.loadUsers(response.memos, _state.value.userProfiles)
+                if (generation != timelineGeneration) return
+                _state.update { it.copy(userProfiles = it.userProfiles + profiles) }
             }
         } catch (e: CancellationException) {
             throw e
@@ -410,17 +456,19 @@ class MemosTimelineController(
         _state.update { it.copy(isLoadingMore = true) }
         try {
             val response = session.api.listMemos(pageToken = token, filter = filter)
-            val profiles = session.loadUsers(response.memos)
             if (generation != timelineGeneration) return
             _state.update {
                 it.copy(
                     timeline = (it.timeline + response.memos).distinctBy { memo -> memo.name },
                     nextPageToken = response.nextPageToken,
-                    userProfiles = it.userProfiles + profiles,
                     error = null
                 )
             }
             if (filter.isBlank()) persistTimeline(accountId, _state.value.timeline, _state.value.nextPageToken)
+            session.ensureVersion()
+            val profiles = session.loadUsers(response.memos, _state.value.userProfiles)
+            if (generation != timelineGeneration) return
+            _state.update { it.copy(userProfiles = it.userProfiles + profiles) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -439,7 +487,7 @@ class MemosTimelineController(
         val session = activeSessionOrNull() ?: return emptyList()
         val generation = accountGeneration
         val response = session.api.listMemos(pageSize = 50, filter = "content.contains(\"${celEscape(trimmed)}\")")
-        val profiles = session.loadUsers(response.memos)
+        val profiles = session.loadUsers(response.memos, _state.value.userProfiles)
         if (generation != accountGeneration) throw CancellationException("Account changed")
         _state.update { it.copy(userProfiles = it.userProfiles + profiles) }
         return response.memos
@@ -493,10 +541,31 @@ class MemosTimelineController(
         check(!_state.value.isPublishing) { "A memo is already being published" }
         val accountId = _state.value.activeAccountId
         val generation = accountGeneration
-        _state.update { it.copy(isPublishing = true) }
+        _state.update { it.copy(isPublishing = true, uploadProgress = null) }
         try {
-            val attachments = pendingAttachments.map { upload ->
-                session.api.createAttachment(upload.filename, upload.content, upload.type)
+            session.ensureVersion()
+            val supported = session.api.capabilities.motionMediaSupported
+            val uploads = if (supported) {
+                pendingAttachments
+            } else {
+                // Older servers reject unknown motion metadata; keep the still image.
+                pendingAttachments
+                    .filterNot { it.motionMedia?.role == MotionMediaRole.VIDEO }
+                    .map { it.copy(motionMedia = null) }
+            }
+            val attachments = uploads.map { upload ->
+                session.api.uploadAttachment(
+                    filename = upload.filename,
+                    content = upload.content,
+                    type = upload.type,
+                    motionMedia = upload.motionMedia
+                ) { uploaded, total ->
+                    if (generation == accountGeneration) {
+                        _state.update {
+                            it.copy(uploadProgress = UploadProgress(upload.filename, uploaded, total))
+                        }
+                    }
+                }
             }
             val memo = session.api.createMemo(body, visibility, attachments = attachments)
             if (generation != accountGeneration) return
@@ -514,7 +583,7 @@ class MemosTimelineController(
             }
         } finally {
             // Failure propagates to the editor, which must keep the draft for retry.
-            if (generation == accountGeneration) _state.update { it.copy(isPublishing = false) }
+            if (generation == accountGeneration) _state.update { it.copy(isPublishing = false, uploadProgress = null) }
         }
     }
 
@@ -527,8 +596,8 @@ class MemosTimelineController(
         _state.update { it.copy(selectedMemo = cached, selectedComments = emptyList(), error = null) }
         try {
             val memo = session.api.getMemo(name)
-            val comments = session.api.listComments(name).memos
-            val profiles = session.loadUsers(listOf(memo) + comments)
+            val comments = session.api.listComments(name).items
+            val profiles = session.loadUsers(listOf(memo) + comments, _state.value.userProfiles)
             if (generation != detailGeneration) return
             _state.update {
                 it.copy(selectedMemo = memo, selectedComments = comments, userProfiles = it.userProfiles + profiles, error = null)
@@ -674,6 +743,18 @@ class MemosTimelineController(
     override suspend fun attachmentBytes(attachment: Attachment, thumbnail: Boolean): ByteArray? =
         runCatching { activeSessionOrNull()?.api?.getAttachmentBytes(attachment, thumbnail) }.getOrNull()
 
+    override suspend fun motionBytes(memo: Memo, attachment: Attachment): ByteArray? {
+        val target = memo.motionTargetFor(attachment) ?: return null
+        val session = activeSessionOrNull() ?: return null
+        return runCatching {
+            session.api.getAttachmentBytes(
+                target,
+                thumbnail = false,
+                motion = target.motionMedia?.hasEmbeddedVideo == true
+            )
+        }.getOrNull()
+    }
+
     fun attachmentUrl(memo: Memo, attachmentName: String, thumbnail: Boolean = false): String {
         val attachment = memo.attachments.firstOrNull { it.name == attachmentName } ?: return ""
         return activeSessionOrNull()?.api?.attachmentUrl(attachment, thumbnail = thumbnail).orEmpty()
@@ -726,6 +807,20 @@ class MemosTimelineController(
         )
     }
 
+    private fun updateAccount(accountId: String, transform: (MemosAccount) -> MemosAccount) {
+        var changed = false
+        _state.update { current ->
+            val accounts = current.accounts.map { account ->
+                if (account.id != accountId) return@map account
+                val next = transform(account)
+                if (next != account) changed = true
+                next
+            }
+            if (changed) current.copy(accounts = accounts) else current
+        }
+        if (changed) persistAccounts()
+    }
+
     private fun setBusy(isLoading: Boolean) {
         _state.update { it.copy(isLoading = isLoading) }
     }
@@ -752,16 +847,7 @@ class MemosTimelineController(
     override suspend fun refreshInstanceVersion(accountId: String) {
         val account = _state.value.accounts.firstOrNull { it.id == accountId } ?: return
         val session = sessions.getOrPut(accountId) { AccountSession(account) }
-        val version = session.loadInstanceVersion()
-        if (version.isBlank() || version == account.instanceVersion) return
-        _state.update { current ->
-            current.copy(
-                accounts = current.accounts.map {
-                    if (it.id == accountId) it.copy(instanceVersion = version) else it
-                }
-            )
-        }
-        persistAccounts()
+        session.ensureVersion(force = true)
     }
 
     override suspend fun refreshActivityStats() {
@@ -802,6 +888,8 @@ class MemosTimelineController(
     private inner class AccountSession(private val account: MemosAccount) {
         private var accessToken: String? = null
         private var accessTokenExpiresAt: Instant? = null
+        private var versionChecked = false
+        private val versionMutex = Mutex()
         private val cookieStorage = PersistentCookieStorage("memos.cookies.${account.id}", keyValueStore)
         val api: MemosApi = MemosApi(
             instanceUrl = account.instanceUrl,
@@ -813,12 +901,22 @@ class MemosTimelineController(
                     _state.update { it.copy(error = "Session expired for ${account.username} — sign in again") }
                 }
             },
-            cookieStorage = cookieStorage
+            cookieStorage = cookieStorage,
+            initialSurface = account.apiSurface,
+            initialVersion = MemosVersion.parse(account.instanceVersion),
+            onCompatibilityChanged = { detectedSurface, detectedVersion ->
+                updateAccount(account.id) {
+                    it.copy(
+                        apiSurface = detectedSurface,
+                        instanceVersion = detectedVersion?.display ?: it.instanceVersion
+                    )
+                }
+            }
         )
 
         suspend fun signIn(username: String, password: String) = api.signIn(username, password).also {
             accessToken = it.accessToken
-            accessTokenExpiresAt = it.accessTokenExpiresAt
+            accessTokenExpiresAt = it.expiresAt
         }
 
         suspend fun loadBranding(): Pair<String, String> = runCatching {
@@ -826,24 +924,59 @@ class MemosTimelineController(
             (profile?.title?.ifBlank { "Memos" } ?: "Memos") to (profile?.logoUrl.orEmpty())
         }.getOrDefault("Memos" to "")
 
-        /** The instance's version, or empty when it cannot be read. */
-        suspend fun loadInstanceVersion(): String = runCatching {
-            api.instanceProfile().version
-        }.getOrDefault("")
+        /** Detects the API surface and version once, unless [force]. */
+        suspend fun ensureVersion(force: Boolean = false) {
+            if (!force && (versionChecked || api.version != null)) return
+            versionMutex.withLock {
+                if (!force && (versionChecked || api.version != null)) return
+                val profile = runCatching { api.detectInstanceProfile() }.getOrNull() ?: return
+                versionChecked = true
+                val raw = profile.version.ifBlank { api.version?.display.orEmpty() }
+                updateAccount(account.id) {
+                    it.copy(apiSurface = api.surface, instanceVersion = raw.ifBlank { it.instanceVersion })
+                }
+            }
+        }
 
-        suspend fun loadUsers(memos: List<Memo>): Map<String, User> = try {
-            api.batchGetUsers(memos.map { it.creator.substringAfterLast('/') })
-                .associateBy { it.username }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {
-            emptyMap()
+        suspend fun loadUsers(memos: List<Memo>, known: Map<String, User> = emptyMap()): Map<String, User> {
+            val creators = memos.map { it.creator }.filter { it.isNotBlank() }.distinct()
+                .filter { creator -> creator !in known && creator.substringAfterLast('/') !in known }
+            if (creators.isEmpty()) return emptyMap()
+            val fetched = try {
+                if (api.capabilities.batchUsersSupported) api.batchGetUsers(creators) else emptyList()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                emptyList()
+            }
+            val byId = fetched.associateBy { it.name.substringAfterLast('/') }
+            val missing = creators.filter { it.substringAfterLast('/') !in byId }
+            // 0.26–0.29 have no BatchGetUsers; a partial batch also leaves holes.
+            val fallback = if (missing.isEmpty()) emptyList() else coroutineScope {
+                missing.take(MAX_PROFILE_FETCH).map { creator ->
+                    async {
+                        try {
+                            api.getUser(creator)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (_: Exception) {
+                            null
+                        }
+                    }
+                }.awaitAll().filterNotNull()
+            }
+            return (fetched + fallback).filter { it.name.isNotBlank() || it.username.isNotBlank() }.flatMap { user ->
+                listOf(
+                    user.name.substringAfterLast('/') to user,
+                    user.username to user
+                )
+            }.toMap()
         }
 
         suspend fun refreshToken(): String? = runCatching {
             val response = api.refresh()
             accessToken = response.accessToken
-            accessTokenExpiresAt = response.expiresAt
+            accessTokenExpiresAt = response.expires
             accessToken
         }.getOrNull()
 
@@ -862,6 +995,7 @@ class MemosTimelineController(
         private const val THEME_KEY = "ui.themeMode"
         private const val CACHED_MEMO_LIMIT = 100
         private const val MAX_CACHED_AVATAR_BYTES = 512 * 1024
+        private const val MAX_PROFILE_FETCH = 20
 
         private fun accountId(instanceUrl: String, username: String): String {
             val raw = "${normalizeInstanceUrl(instanceUrl)}:${username.trim().lowercase()}"
