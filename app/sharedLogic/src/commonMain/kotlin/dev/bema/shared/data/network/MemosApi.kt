@@ -160,11 +160,14 @@ class MemosApi(
     private fun missingRoute(status: HttpStatusCode): Boolean =
         status == HttpStatusCode.NotFound || status == HttpStatusCode.Gone || status == HttpStatusCode.MethodNotAllowed
 
-    private fun surfacesToTry(): List<MemosApiSurface> = when {
-        version != null && version >= MEMOS_26_10 -> listOf(MemosApiSurface.MODERN)
-        version != null -> listOf(MemosApiSurface.V1)
-        surface == MemosApiSurface.MODERN -> listOf(MemosApiSurface.MODERN, MemosApiSurface.V1)
-        else -> listOf(MemosApiSurface.V1, MemosApiSurface.MODERN)
+    private fun surfacesToTry(): List<MemosApiSurface> {
+        val known = version
+        return when {
+            known != null && known >= MEMOS_26_10 -> listOf(MemosApiSurface.MODERN)
+            known != null -> listOf(MemosApiSurface.V1)
+            surface == MemosApiSurface.MODERN -> listOf(MemosApiSurface.MODERN, MemosApiSurface.V1)
+            else -> listOf(MemosApiSurface.V1, MemosApiSurface.MODERN)
+        }
     }
 
     private fun nextSurface(tried: Set<MemosApiSurface>): MemosApiSurface? =
