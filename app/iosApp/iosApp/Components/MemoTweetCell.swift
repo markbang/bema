@@ -13,8 +13,9 @@ struct MemoActions {
 }
 
 /// One image in the media rail: cropped to fill, rounded, and tappable.
-final class MediaPageView: UIControl, UIContextMenuInteractionDelegate {
+final class MediaPageView: UIControl {
     private let imageView = UIImageView()
+    private let menuDelegate = MediaMenuDelegate()
     private let spinner = UIActivityIndicatorView(style: .medium)
     private let liveBadge = UILabel()
     private let playButton = UIButton(type: .system)
@@ -73,7 +74,8 @@ final class MediaPageView: UIControl, UIContextMenuInteractionDelegate {
             playButton.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8)
         ])
         setLive(false)
-        addInteraction(UIContextMenuInteraction(delegate: self))
+        menuDelegate.page = self
+        addInteraction(UIContextMenuInteraction(delegate: menuDelegate))
     }
 
     convenience init() {
@@ -96,10 +98,7 @@ final class MediaPageView: UIControl, UIContextMenuInteractionDelegate {
         playButton.isHidden = !live
     }
 
-    func contextMenuInteraction(
-        _ interaction: UIContextMenuInteraction,
-        configurationForMenuAtLocation location: CGPoint
-    ) -> UIContextMenuConfiguration? {
+    fileprivate func menuConfiguration() -> UIContextMenuConfiguration? {
         guard let image = imageView.image else { return nil }
         return UIContextMenuConfiguration(
             identifier: nil,
@@ -423,5 +422,17 @@ final class MemoTweetCell: UITableViewCell {
 
     @objc private func imageTapped(_ sender: UIButton) {
         actions.openImage?(sender.tag)
+    }
+}
+
+
+private final class MediaMenuDelegate: NSObject, UIContextMenuInteractionDelegate {
+    weak var page: MediaPageView?
+
+    func contextMenuInteraction(
+        _ interaction: UIContextMenuInteraction,
+        configurationForMenuAtLocation location: CGPoint
+    ) -> UIContextMenuConfiguration? {
+        page?.menuConfiguration()
     }
 }

@@ -61,8 +61,9 @@ data class Memo(
         return when {
             motion.hasEmbeddedVideo -> attachment
             motion.role == MotionMediaRole.STILL && motion.groupId.isNotBlank() ->
-                attachments.firstOrNull {
-                    it.motionMedia?.groupId == motion.groupId && it.motionMedia?.role == MotionMediaRole.VIDEO
+                attachments.firstOrNull { sibling ->
+                    val siblingMotion = sibling.motionMedia ?: return@firstOrNull false
+                    siblingMotion.groupId == motion.groupId && siblingMotion.role == MotionMediaRole.VIDEO
                 }
             else -> null
         }

@@ -173,6 +173,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import coil3.compose.AsyncImage
+import dev.bema.shared.data.model.Attachment
 import dev.bema.shared.data.model.CustomProfile
 import dev.bema.shared.data.model.GeneralSetting
 import dev.bema.shared.data.model.InstanceSetting
