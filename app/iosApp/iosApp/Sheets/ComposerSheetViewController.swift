@@ -208,7 +208,7 @@ final class ComposerSheetViewController: UIViewController, PHPickerViewControlle
                 finish(nil)
                 return
             }
-            loadFile(provider, type: .movie) { movieData, movieType, movieName in
+            self.loadFile(provider, type: .movie) { movieData, movieType, movieName in
                 guard let movieData else {
                     finish(Draft(
                         parts: [Part(filename: imageName, data: imageData, type: imageType, motion: nil)],
